@@ -292,7 +292,7 @@ const sendEmail = async (stats, error = null) => {
         let transactionDetails = '';
         if (stats.newTransactions.length > 0) {
             transactionDetails = '\n\nNew Transactions:\n' + stats.newTransactions.map(t => 
-                `  • ${t.TransactionDateFormatted} - ${t.TransactionType} - ${t.LocationRoute} - ${t.AmountFormatted}`
+                `  • ${t.TransactionDateFormatted} - ${t.LocationRoute} [${t.TransactionType}]`
             ).join('\n');
         }
 
