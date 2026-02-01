@@ -1,5 +1,5 @@
 # Ventra Transit Scraper
-A Node.js script to fetch and store your Ventra transit card usage history. Note this does not fetch Metra data.
+A Node.js script to fetch and store your Ventra transit card usage history. The script also emails results when complete. Note this does not fetch Metra data.
 
 ## Overview
 This script logs into your Ventra account and pulls your recent transaction history, storing it locally in a JSON file. It's designed to run periodically (e.g., weekly via cron) to build up a complete dataset of your transit usage throughout the year. Ventra's APIs only return up to 100 individual account usage events, which is why this script should be run periodically to capture your usage.
@@ -16,6 +16,8 @@ This script logs into your Ventra account and pulls your recent transaction hist
 - A Ventra account
 
 ## Setup
+
+`npm ci` to install dependencies
 
 ### Finding Your Transit Account ID
 
@@ -38,7 +40,13 @@ module.exports = {
         username: 'your_ventra_username',
         password: 'your_ventra_password',
         transitAccountId: 'your_transit_account_id'
-    }
+    },
+    email: {
+        service: 'gmail',
+        user: '...@gmail.com',
+        password: '...',
+        to: '...@gmail.com'
+    },
 };
 ```
 

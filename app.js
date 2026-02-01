@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
-const { ventraKeys } = require('./keys.js');
+const { ventraKeys, email } = require('./keys.js');
+const nodemailer = require('nodemailer');
 
 class VentraAPI {
     constructor(username, password, transitAccountId) {
@@ -72,7 +73,7 @@ class VentraAPI {
         }
     }
 
-    /** Extract CSRF token from account page so request to retrieve account history can be authenticated */
+    /** Extract CSRF verification token from account page */
     getVerificationToken = async () => {
         console.log('Getting verification token');
 
@@ -100,7 +101,7 @@ class VentraAPI {
         }
     }
 
-    /** Fetch recent transit usage history from API */
+    /** Fetch transaction history from API */
     getTransactionHistory = async () => {
         console.log(`Fetching transaction history`);
 
@@ -160,6 +161,7 @@ class VentraAPI {
         }
     }
 
+    /** Execute full workflow: login, get token, fetch data */
     fetchAllData = async () => {
         if (!await this.login()) {
             return null;
@@ -173,10 +175,12 @@ class VentraAPI {
     }
 }
 
+/** Generate unique key for deduplication */
 const getTransactionKey = (transaction) => {
     return `${transaction.TransactionDate}_${transaction.TransactionType}_${transaction.LocationRoute}_${transaction.Amount}`;
 };
 
+/** Load existing transactions from file */
 const loadExistingData = async (dataFile) => {
     try {
         const content = await fs.readFile(dataFile, 'utf-8');
@@ -190,8 +194,8 @@ const loadExistingData = async (dataFile) => {
     }
 };
 
+/** Clean transaction data (remove HTML, normalize spacing) */
 const cleanTransaction = (transaction) => {
-    // Remove HTML tags from the formatted date and clean up extra spaces
     return {
         ...transaction,
         TransactionDateFormatted: transaction.TransactionDateFormatted
@@ -201,24 +205,27 @@ const cleanTransaction = (transaction) => {
     };
 };
 
+/** Merge new transactions with existing data, filtering duplicates and Sales */
 const mergeTransactions = (existingData, newData) => {
     if (!newData || !newData.d || !newData.d.result || !newData.d.result.data) {
         console.log('No new data to merge');
-        return existingData;
+        return {
+            data: existingData,
+            stats: { addedCount: 0, filteredCount: 0, newTransactions: [] }
+        };
     }
 
     const newTransactions = newData.d.result.data;
     
-    // Create a Set of existing transaction keys for fast lookup
     const existingKeys = new Set(
         existingData.transactions.map(t => getTransactionKey(t))
     );
 
     let addedCount = 0;
     let filteredCount = 0;
+    const addedTransactions = [];
     
     for (const transaction of newTransactions) {
-        // Filter out Sale transactions (Ventra account reloads)
         if (transaction.TransactionType === 'Sale') {
             filteredCount++;
             continue;
@@ -226,13 +233,14 @@ const mergeTransactions = (existingData, newData) => {
         
         const key = getTransactionKey(transaction);
         if (!existingKeys.has(key)) {
-            existingData.transactions.push(cleanTransaction(transaction));
+            const cleanedTransaction = cleanTransaction(transaction);
+            existingData.transactions.push(cleanedTransaction);
+            addedTransactions.push(cleanedTransaction);
             existingKeys.add(key);
             addedCount++;
         }
     }
 
-    // Sort by date (most recent first)
     existingData.transactions.sort((a, b) => {
         const dateA = parseInt(a.TransactionDate.match(/\d+/)[0]);
         const dateB = parseInt(b.TransactionDate.match(/\d+/)[0]);
@@ -248,7 +256,65 @@ const mergeTransactions = (existingData, newData) => {
     }
     console.log(`Total transactions: ${existingData.totalTransactions}`);
 
-    return existingData;
+    return {
+        data: existingData,
+        stats: { addedCount, filteredCount, newTransactions: addedTransactions }
+    };
+};
+
+/** Send email notification */
+const sendEmail = async (stats, error = null) => {
+    const emailConfig = email;
+    
+    if (!emailConfig) {
+        console.log('No email configuration found, skipping notification');
+        return;
+    }
+
+    const transporter = nodemailer.createTransport({
+        service: emailConfig.service,
+        auth: {
+            user: emailConfig.user,
+            pass: emailConfig.password
+        }
+    });
+
+    let subject, text;
+
+    if (error) {
+        subject = '❌ Ventra Scraper Error';
+        text = `Ventra scraper encountered an error:\n\n${error}\n\nTime: ${new Date().toISOString()}`;
+    } else {
+        subject = stats.addedCount > 0 
+            ? `✅ Ventra Scraper: ${stats.addedCount} New Transaction${stats.addedCount !== 1 ? 's' : ''}`
+            : '✅ Ventra Scraper: No New Transactions';
+
+        let transactionDetails = '';
+        if (stats.newTransactions.length > 0) {
+            transactionDetails = '\n\nNew Transactions:\n' + stats.newTransactions.map(t => 
+                `  • ${t.TransactionDateFormatted} - ${t.TransactionType} - ${t.LocationRoute} - ${t.AmountFormatted}`
+            ).join('\n');
+        }
+
+        text = `Ventra scraper completed successfully!\n\n` +
+               `Added: ${stats.addedCount} new transaction${stats.addedCount !== 1 ? 's' : ''}\n` +
+               `Filtered: ${stats.filteredCount} Sale transaction${stats.filteredCount !== 1 ? 's' : ''}\n` +
+               `Total: ${stats.totalTransactions} transactions in database\n` +
+               `Time: ${new Date().toISOString()}` +
+               transactionDetails;
+    }
+
+    try {
+        await transporter.sendMail({
+            from: emailConfig.user,
+            to: emailConfig.to || emailConfig.user,
+            subject: subject,
+            text: text
+        });
+        console.log('Email notification sent');
+    } catch (emailError) {
+        console.error('Failed to send email:', emailError.message);
+    }
 };
 
 const main = async () => {
@@ -266,12 +332,15 @@ const main = async () => {
         const newData = await ventra.fetchAllData();
 
         if (!newData) {
-            console.log(`[${new Date().toISOString()}] - No data retrieved`);
+            const errorMsg = 'No data retrieved';
+            console.log(`[${new Date().toISOString()}] - ${errorMsg}`);
+            await sendEmail(null, errorMsg);
             return;
         }
 
         const existingData = await loadExistingData(DATA_FILE);
-        const mergedData = mergeTransactions(existingData, newData);
+        const { data: mergedData, stats } = mergeTransactions(existingData, newData);
+        
         await fs.writeFile(
             DATA_FILE,
             JSON.stringify(mergedData, null, 2),
@@ -281,9 +350,19 @@ const main = async () => {
         console.log(`Data saved to ${DATA_FILE}`);
         console.log(`[${new Date().toISOString()}] Complete`);
 
+        await sendEmail({
+            ...stats,
+            totalTransactions: mergedData.totalTransactions
+        });
+
     } catch (error) {
         console.error(`[${new Date().toISOString()}] - Error:`, error.message);
+        await sendEmail(null, error.message);
     }
 };
 
-main();
+if (require.main === module) {
+    main();
+}
+
+module.exports = { VentraAPI, mergeTransactions };
