@@ -68,7 +68,7 @@ class VentraAPI {
                 return false;
             }
         } catch (error) {
-            console.error('Login error:', error.message);
+            console.error('Login error:', error);
             return false;
         }
     }
@@ -96,7 +96,7 @@ class VentraAPI {
                 return false;
             }
         } catch (error) {
-            console.error('Token fetch error:', error.message);
+            console.error('Token fetch error:', error);
             return false;
         }
     }
@@ -156,7 +156,7 @@ class VentraAPI {
                 return null;
             }
         } catch (error) {
-            console.error('Retrieval error:', error.message);
+            console.error('Retrieval error:', error);
             return null;
         }
     }
@@ -186,6 +186,7 @@ const loadExistingData = async (dataFile) => {
         const content = await fs.readFile(dataFile, 'utf-8');
         return JSON.parse(content);
     } catch (error) {
+        console.log("Error loading existing transactions:", error);
         return {
             transactions: [],
             lastUpdated: null,
@@ -356,7 +357,7 @@ const main = async () => {
         });
 
     } catch (error) {
-        console.error(`[${new Date().toISOString()}] - Error:`, error.message);
+        console.error(`[${new Date().toISOString()}] - Error:`, error);
         await sendEmail(null, error.message);
     }
 };
