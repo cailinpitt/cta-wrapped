@@ -2,6 +2,12 @@ const fs = require('fs').promises;
 const { ventraKeys, email } = require('./keys.js');
 const nodemailer = require('nodemailer');
 
+const CONFIG = {
+    maxRetries: 3,
+    retryDelay: 5000,
+    dataFile: 'ventra_transactions.json'
+};
+
 class VentraAPI {
     constructor(username, password, transitAccountId) {
         this.baseUrl = 'https://www.ventrachicago.com';
@@ -69,7 +75,7 @@ class VentraAPI {
             }
         } catch (error) {
             console.error('Login error:', error);
-            return false;
+            throw error;
         }
     }
 
@@ -97,7 +103,7 @@ class VentraAPI {
             }
         } catch (error) {
             console.error('Token fetch error:', error);
-            return false;
+            throw error;
         }
     }
 
@@ -152,32 +158,60 @@ class VentraAPI {
                 return await response.json();
             } else {
                 const text = await response.text();
-                console.log(`Error retrieving transit usage ${response} Response: ${text}`);
-                return null;
+                console.log(`Error retrieving transit usage ${response.status} Response: ${text}`);
+                throw new Error(`HTTP ${response.status}: ${text}`);
             }
         } catch (error) {
             console.error('Retrieval error:', error);
-            return null;
+            throw error;
         }
     }
 
     /** Execute full workflow: login, get token, fetch data */
     fetchAllData = async () => {
         if (!await this.login()) {
-            return null;
+            throw new Error('Login failed');
         }
 
+        await sleep(2000);
+
         if (!await this.getVerificationToken()) {
-            return null;
+            throw new Error('Failed to get verification token');
         }
+
+        await sleep(3000);
 
         return await this.getTransactionHistory();
     }
 }
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+/** Retry wrapper for async functions */
+const withRetry = async (fn, maxRetries = CONFIG.maxRetries, retryDelay = CONFIG.retryDelay) => {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`Attempt ${attempt} of ${maxRetries}`);
+            return await fn();
+        } catch (error) {
+            lastError = error;
+            console.error(`Attempt ${attempt} failed:`, error.message);
+            
+            if (attempt < maxRetries) {
+                console.log(`Waiting ${retryDelay / 1000} seconds before retry...`);
+                await sleep(retryDelay);
+            }
+        }
+    }
+    
+    throw new Error(`All ${maxRetries} attempts failed. Last error: ${lastError.message}`);
+};
+
 /** Generate unique key for deduplication */
 const getTransactionKey = (transaction) => {
-    return `${transaction.TransactionDate}_${transaction.TransactionType}_${transaction.LocationRoute}_${transaction.Amount}`;
+    return `${transaction.timestamp}_${transaction.transactionType}_${transaction.locationRoute}_${transaction.amount}`;
 };
 
 /** Load existing transactions from file */
@@ -186,7 +220,7 @@ const loadExistingData = async (dataFile) => {
         const content = await fs.readFile(dataFile, 'utf-8');
         return JSON.parse(content);
     } catch (error) {
-        console.log("Error loading existing transactions:", error);
+        console.log("Error loading existing transactions:", error.message);
         return {
             transactions: [],
             lastUpdated: null,
@@ -195,14 +229,24 @@ const loadExistingData = async (dataFile) => {
     }
 };
 
-/** Clean transaction data (remove HTML, normalize spacing) */
+/** Transform raw transaction into clean format */
 const cleanTransaction = (transaction) => {
+    const timestamp = parseInt(transaction.TransactionDate.match(/\d+/)[0]);
+    const formattedDate = transaction.TransactionDateFormatted
+        .replace(/<br\/>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    
+    const type = transaction.OperatorDesc && transaction.OperatorDesc.includes('Rail') ? 'Rail' : 'Bus';
+
     return {
-        ...transaction,
-        TransactionDateFormatted: transaction.TransactionDateFormatted
-            .replace(/<br\/>/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
+        formattedDate,
+        formattedAmount: transaction.AmountFormatted,
+        timestamp,
+        transactionType: transaction.TransactionType,
+        type,
+        locationRoute: transaction.LocationRoute,
+        amount: transaction.Amount
     };
 };
 
@@ -232,9 +276,10 @@ const mergeTransactions = (existingData, newData) => {
             continue;
         }
         
-        const key = getTransactionKey(transaction);
+        const cleanedTransaction = cleanTransaction(transaction);
+        const key = getTransactionKey(cleanedTransaction);
+        
         if (!existingKeys.has(key)) {
-            const cleanedTransaction = cleanTransaction(transaction);
             existingData.transactions.push(cleanedTransaction);
             addedTransactions.push(cleanedTransaction);
             existingKeys.add(key);
@@ -242,11 +287,7 @@ const mergeTransactions = (existingData, newData) => {
         }
     }
 
-    existingData.transactions.sort((a, b) => {
-        const dateA = parseInt(a.TransactionDate.match(/\d+/)[0]);
-        const dateB = parseInt(b.TransactionDate.match(/\d+/)[0]);
-        return dateB - dateA;
-    });
+    existingData.transactions.sort((a, b) => b.timestamp - a.timestamp);
 
     existingData.lastUpdated = new Date().toISOString();
     existingData.totalTransactions = existingData.transactions.length;
@@ -293,7 +334,7 @@ const sendEmail = async (stats, error = null) => {
         let transactionDetails = '';
         if (stats.newTransactions.length > 0) {
             transactionDetails = '\n\nNew Transactions:\n' + stats.newTransactions.map(t => 
-                `  • ${t.TransactionDateFormatted} - ${t.LocationRoute} [${t.TransactionType}]`
+                `  • ${t.formattedDate} - ${t.type} - ${t.locationRoute} [${t.transactionType}]`
             ).join('\n');
         }
 
@@ -319,8 +360,6 @@ const sendEmail = async (stats, error = null) => {
 };
 
 const main = async () => {
-    const DATA_FILE = 'ventra_transactions.json';
-    
     const username = ventraKeys.username;
     const password = ventraKeys.password;
     const transitAccountId = ventraKeys.transitAccountId;
@@ -330,25 +369,18 @@ const main = async () => {
     const ventra = new VentraAPI(username, password, transitAccountId);
 
     try {
-        const newData = await ventra.fetchAllData();
+        const newData = await withRetry(() => ventra.fetchAllData());
 
-        if (!newData) {
-            const errorMsg = 'No data retrieved';
-            console.log(`[${new Date().toISOString()}] - ${errorMsg}`);
-            await sendEmail(null, errorMsg);
-            return;
-        }
-
-        const existingData = await loadExistingData(DATA_FILE);
+        const existingData = await loadExistingData(CONFIG.dataFile);
         const { data: mergedData, stats } = mergeTransactions(existingData, newData);
         
         await fs.writeFile(
-            DATA_FILE,
+            CONFIG.dataFile,
             JSON.stringify(mergedData, null, 2),
             'utf-8'
         );
 
-        console.log(`Data saved to ${DATA_FILE}`);
+        console.log(`Data saved to ${CONFIG.dataFile}`);
         console.log(`[${new Date().toISOString()}] Complete`);
 
         await sendEmail({
@@ -365,5 +397,3 @@ const main = async () => {
 if (require.main === module) {
     main();
 }
-
-module.exports = { VentraAPI, mergeTransactions };
