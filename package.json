@@ -1,5 +1,7 @@
 {
   "dependencies": {
-    "nodemailer": "^7.0.13"
+    "canvas": "^3.2.1",
+    "nodemailer": "^7.0.13",
+    "twemoji": "^14.0.2"
   }
 }

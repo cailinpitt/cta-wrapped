@@ -1,15 +1,19 @@
-# Ventra Transit Scraper
-A Node.js script to fetch and store your Ventra transit card usage history. The script also emails results when complete. Note this does not fetch Metra data.
+# CTA Wrapped
+Node.js scripts to fetch and store your Ventra transit card usage history, and generate usage visuals. Note this does not support Metra data.
 
 ## Overview
+### fetch.js
 This script logs into your Ventra account and pulls your recent transaction history, storing it locally in a JSON file. It's designed to run periodically (e.g., weekly via cron) to build up a complete dataset of your transit usage throughout the year. Ventra's APIs only return up to 100 individual account usage events, which is why this script should be run periodically to capture your usage.
 
-## How It Works
+#### How It Works
 1. **Login** - Authenticates with your Ventra username and password
 2. **Get Token** - Extracts the CSRF verification token from your account page
 3. **Fetch Transactions** - Calls the Ventra API to retrieve your transaction history
 4. **Merge & Deduplicate** - Adds only new transactions to your existing data file
 5. **Clean & Filter** - Removes HTML tags from dates and filters out "Sale" transactions (when you add money to your card)
+
+### generate_wrapped.js
+This script analyzes Ventra usage data locally and generates sharable images with usage data by month or year (using Canvas) in `wrapped_images/`.
 
 ## Requirements
 - Node.js 18+ (for built-in `fetch` API)
@@ -51,9 +55,11 @@ module.exports = {
 ```
 
 ## Usage
+### Fetching Ventra Data
+
 Run the script manually:
 ```bash
-node ventra_scraper.js
+node fetch.js
 ```
 Or set up a weekly cron job (runs every Sunday at 2 AM):
 ```bash
@@ -64,7 +70,7 @@ Add this line:
 0 2 * * 0 cd /path/to/script && node ventra_scraper.js >> ventra_scraper.log 2>&1
 ```
 
-## Output
+#### Output
 The script creates/updates `ventra_transactions.json` with the following structure:
 ```json
 {
@@ -83,7 +89,15 @@ The script creates/updates `ventra_transactions.json` with the following structu
 }
 ```
 
-## Notes
+#### Notes
 - Only "Use" and "Transfer" transactions are stored. Sales (Ventra account reloads) are filtered out
 - Duplicate transactions are automatically skipped
 - Transactions are sorted by date (most recent first)
+
+### Generating Summary Images
+
+Run the script manually:
+```bash
+node generate_wrapped.js 2026      # Full year
+node generate_wrapped.js 2026 1    # Specific month (January)
+```

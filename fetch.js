@@ -5,7 +5,6 @@ const nodemailer = require('nodemailer');
 const CONFIG = {
     maxRetries: 3,
     retryDelay: 5000,
-    dataFile: 'ventra_transactions.json'
 };
 
 class VentraAPI {
@@ -363,6 +362,7 @@ const main = async () => {
     const username = ventraKeys.username;
     const password = ventraKeys.password;
     const transitAccountId = ventraKeys.transitAccountId;
+    const dataFile = 'ventra_transactions.json';
 
     console.log(`[${new Date().toISOString()}] Starting Ventra data fetch`);
 
@@ -371,16 +371,16 @@ const main = async () => {
     try {
         const newData = await withRetry(() => ventra.fetchAllData());
 
-        const existingData = await loadExistingData(CONFIG.dataFile);
+        const existingData = await loadExistingData(dataFile);
         const { data: mergedData, stats } = mergeTransactions(existingData, newData);
         
         await fs.writeFile(
-            CONFIG.dataFile,
+            dataFile,
             JSON.stringify(mergedData, null, 2),
             'utf-8'
         );
 
-        console.log(`Data saved to ${CONFIG.dataFile}`);
+        console.log(`Data saved to ${dataFile}`);
         console.log(`[${new Date().toISOString()}] Complete`);
 
         await sendEmail({

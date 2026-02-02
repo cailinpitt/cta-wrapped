@@ -1,3 +1,5 @@
 keys.js
 ventra_transactions.json
 node_modules/
+wrapped_images/
+.DS_Store
