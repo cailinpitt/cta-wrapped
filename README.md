@@ -15,6 +15,13 @@ This script logs into your Ventra account and pulls your recent transaction hist
 ### generate_wrapped.js
 This script analyzes Ventra usage data locally and generates sharable images with usage data by month or year (using Canvas) in `wrapped_images/`.
 
+<p float="middle">
+  <img src="example/2026-01-1-overview.png" width="25%" />
+  <img src="example/2026-01-2-rail.png" width="25%" /> 
+  <img src="example/2026-01-3-bus.png" width="25%" />
+  <img src="example/2026-01-4-insights.png" width="25%" />
+</p>
+
 ## Requirements
 - Node.js 18+ (for built-in `fetch` API)
 - A Ventra account
