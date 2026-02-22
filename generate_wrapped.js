@@ -237,7 +237,7 @@ const roundRect = (ctx, x, y, width, height, radius) => {
 const generateOverviewImage = async (stats, period) => {
     const { canvas, ctx } = createSlide(['#667eea', '#764ba2']);
     
-    drawText(ctx, 'Ventra Wrapped', CONFIG.width / 2, 180, 80, '900');
+    drawText(ctx, 'CTA Wrapped', CONFIG.width / 2, 180, 80, '900');
     drawText(ctx, period, CONFIG.width / 2, 270, 50);
     
     drawText(ctx, 'You took', CONFIG.width / 2, 400, 40);
@@ -366,6 +366,146 @@ const generateBusImage = async (stats, insights) => {
     return canvas.toBuffer('image/png');
 };
 
+const generateTimeOfDayImage = async (stats) => {
+    const { canvas, ctx } = createSlide(['#a8edea', '#fed6e3']);
+    
+    await drawEmoji(ctx, '⏰', CONFIG.width / 2, 100, 60);
+    drawText(ctx, 'When You Ride', CONFIG.width / 2, 180, 60, '900');
+    
+    // Find peak hour
+    const peakHour = Object.entries(stats.temporal.byHour).sort((a, b) => b[1] - a[1])[0];
+    if (peakHour) {
+        const hour = parseInt(peakHour[0]);
+        const timeLabel = hour < 12 ? `${hour}AM` : hour === 12 ? '12PM' : `${hour - 12}PM`;
+        
+        drawText(ctx, 'Most Active Hour', CONFIG.width / 2, 280, 35);
+        drawText(ctx, timeLabel, CONFIG.width / 2, 360, 90, '900');
+        drawText(ctx, `${peakHour[1]} rides`, CONFIG.width / 2, 420, 30);
+    }
+    
+    // Hourly heat map
+    drawText(ctx, '24-Hour Activity', CONFIG.width / 2, 520, 40, '700');
+    
+    const maxHourlyRides = Math.max(...Object.values(stats.temporal.byHour));
+    const barWidth = 35;
+    const barSpacing = 5;
+    const maxBarHeight = 280;
+    const startX = 65;
+    const baseY = 950;
+    
+    for (let hour = 0; hour < 24; hour++) {
+        const rides = stats.temporal.byHour[hour] || 0;
+        const barHeight = maxHourlyRides > 0 ? (rides / maxHourlyRides) * maxBarHeight : 0;
+        const x = startX + (hour * (barWidth + barSpacing));
+        
+        // Color based on intensity (gradient from light to bright)
+        const intensity = maxHourlyRides > 0 ? rides / maxHourlyRides : 0;
+        const r = Math.floor(255 - (intensity * 100));
+        const g = Math.floor(255 - (intensity * 80));
+        const b = 255;
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
+        
+        // Draw bar
+        roundRect(ctx, x, baseY - barHeight, barWidth, barHeight, 4);
+        ctx.fill();
+        
+        // Hour labels (every 3 hours)
+        if (hour % 3 === 0) {
+            const timeLabel = hour === 0 ? '12A' : hour < 12 ? `${hour}A` : hour === 12 ? '12P' : `${hour-12}P`;
+            ctx.fillStyle = 'white';
+            ctx.font = '18px Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(timeLabel, x + barWidth/2, baseY + 25);
+        }
+    }
+    
+    return canvas.toBuffer('image/png');
+};
+
+const generateDayOfWeekImage = async (stats) => {
+    const { canvas, ctx } = createSlide(['#ff9a9e', '#fecfef']);
+    
+    await drawEmoji(ctx, '📅', CONFIG.width / 2, 100, 60);
+    drawText(ctx, 'Your Week', CONFIG.width / 2, 180, 60, '900');
+    
+    // Find busiest day
+    const busiestDay = stats.overview.busiestDay;
+    if (busiestDay) {
+        drawText(ctx, 'Busiest Day', CONFIG.width / 2, 280, 35);
+        drawText(ctx, busiestDay[0], CONFIG.width / 2, 360, 80, '900');
+        drawText(ctx, `${busiestDay[1]} rides`, CONFIG.width / 2, 420, 30);
+    }
+    
+    // Days of week ordered
+    const daysOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const dayData = daysOrder.map(day => ({
+        day,
+        count: stats.temporal.byDayOfWeek[day] || 0
+    }));
+    
+    // Weekday vs Weekend summary
+    const weekdayRides = dayData.slice(0, 5).reduce((sum, d) => sum + d.count, 0);
+    const weekendRides = dayData.slice(5, 7).reduce((sum, d) => sum + d.count, 0);
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    roundRect(ctx, 90, 480, 900, 120, 20);  // Moved up and made smaller
+    ctx.fill();
+    
+    ctx.textAlign = 'left';
+    drawText(ctx, 'Weekday Rides', 140, 520, 30, 'normal', 'left');  // Adjusted
+    drawText(ctx, 'Weekend Rides', 140, 570, 30, 'normal', 'left');  // Adjusted
+    
+    ctx.textAlign = 'right';
+    drawText(ctx, weekdayRides.toString(), 940, 520, 35, '900', 'right');  // Adjusted
+    drawText(ctx, weekendRides.toString(), 940, 570, 35, '900', 'right');  // Adjusted
+    
+    // Visual bar chart for each day
+    drawText(ctx, 'Daily Activity', CONFIG.width / 2, 650, 40, '700');  // Moved up
+    
+    const maxDayRides = Math.max(...dayData.map(d => d.count));
+    const barMaxWidth = 750;
+    const barHeight = 45;  // Slightly smaller
+    const startY = 700;  // Moved up
+    
+    dayData.forEach((d, i) => {
+        const y = startY + (i * 55);  // Reduced spacing
+        const barWidth = maxDayRides > 0 ? (d.count / maxDayRides) * barMaxWidth : 0;
+        
+        // Background track
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+        roundRect(ctx, 240, y, barMaxWidth, barHeight, 8);
+        ctx.fill();
+        
+        // Filled bar with gradient color based on intensity
+        const intensity = maxDayRides > 0 ? d.count / maxDayRides : 0;
+        const r = Math.floor(255 - (intensity * 60));
+        const g = Math.floor(100 + (intensity * 100));
+        const b = Math.floor(150 + (intensity * 100));
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
+        roundRect(ctx, 240, y, barWidth, barHeight, 8);
+        ctx.fill();
+        
+        // Day label
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'left';
+        ctx.font = 'bold 26px Arial, sans-serif';  // Slightly smaller
+        ctx.fillText(d.day.substring(0, 3), 100, y + 30);  // Adjusted
+        
+        // Count at end of bar
+        if (barWidth > 80) {
+            ctx.textAlign = 'right';
+            ctx.font = 'bold 24px Arial, sans-serif';  // Slightly smaller
+            ctx.fillText(d.count.toString(), 230 + barWidth, y + 30);  // Adjusted
+        } else {
+            ctx.textAlign = 'left';
+            ctx.font = 'bold 24px Arial, sans-serif';  // Slightly smaller
+            ctx.fillText(d.count.toString(), 250 + barWidth, y + 30);  // Adjusted
+        }
+    });
+    
+    return canvas.toBuffer('image/png');
+};
+
 const generatePersonalityImage = async (stats, insights) => {
     const { canvas, ctx } = createSlide(['#fa709a', '#fee140']);
     
@@ -375,7 +515,7 @@ const generatePersonalityImage = async (stats, insights) => {
     keyInsights.forEach((insight, i) => {
         const y = 220 + (i * 190);
         
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';  // Slightly more opaque
         roundRect(ctx, 90, y - 60, 900, 160, 20);
         ctx.fill();
         
@@ -404,7 +544,7 @@ const generatePersonalityImage = async (stats, insights) => {
         const badge = badges[i];
         const x = badgeStartX + (i * badgeSpacing);
         
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';  // Slightly darker
         roundRect(ctx, x, badgeY - 25, 280, 60, 30);
         ctx.fill();
         
@@ -439,14 +579,16 @@ const generateWrapped = async (year, month = null) => {
             ? `${year}-${month.toString().padStart(2, '0')}`
             : `${year}`;
         
-        console.log(`\nGenerating Ventra Wrapped for ${period}...`);
+        console.log(`\nGenerating CTA Wrapped for ${period}...`);
         console.log(`Total transactions: ${filteredTransactions.length}\n`);
         
         const images = [
             { name: '1-overview', fn: () => generateOverviewImage(stats, period) },
             { name: '2-rail', fn: () => generateRailImage(stats, insights) },
             { name: '3-bus', fn: () => generateBusImage(stats, insights) },
-            { name: '4-insights', fn: () => generatePersonalityImage(stats, insights) }
+            { name: '4-time-of-day', fn: () => generateTimeOfDayImage(stats) },
+            { name: '5-day-of-week', fn: () => generateDayOfWeekImage(stats) },
+            { name: '6-personality', fn: () => generatePersonalityImage(stats, insights) }
         ];
         
         for (const img of images) {
@@ -456,7 +598,7 @@ const generateWrapped = async (year, month = null) => {
             console.log(`Generated ${filename}`);
         }
         
-        console.log(`\nAll 4 images saved to ${CONFIG.outputDir}/`);
+        console.log(`\nAll 6 images saved to ${CONFIG.outputDir}/`);
         
     } catch (error) {
         console.error('Error generating wrapped:', error);
