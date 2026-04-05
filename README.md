@@ -13,18 +13,38 @@ This script logs into your Ventra account and pulls your recent transaction hist
 5. **Clean & Filter** - Removes HTML tags from dates and filters out "Sale" transactions (when you add money to your card)
 
 ### generate_wrapped.js
-This script analyzes Ventra usage data locally and generates sharable images with usage data by month or year (using Canvas) in `wrapped_images/`.
+This script analyzes Ventra usage data locally and generates 6 shareable **1080×1920 PNG images** (Instagram Stories / 9:16 format) with usage data by month or year (using Canvas) in `wrapped_images/`.
+
+| # | Image | Contents |
+|---|-------|----------|
+| 1 | `overview` | Total rides, total spent, avg per ride, rail vs bus split bar |
+| 2 | `rail` | Top station, favorite line, top 5 stations ranked with relative bars |
+| 3 | `bus` | Go-to bus route, top 5 routes ranked with relative bars |
+| 4 | `time-of-day` | Peak hour, 24-bar hourly activity chart |
+| 5 | `day-of-week` | Busiest day, weekday vs weekend split, daily bar chart |
+| 6 | `personality` | All 6 insights: home station, favorite line, go-to bus, peak hour, most active day, transit style |
 
 <p float="middle">
-  <img src="example/2026-01-1-overview.png" width="25%" />
-  <img src="example/2026-01-2-rail.png" width="25%" /> 
-  <img src="example/2026-01-3-bus.png" width="25%" />
-  <img src="example/2026-01-4-insights.png" width="25%" />
+  <img src="example/2026-01-1-overview.png" width="30%" />
+  <img src="example/2026-01-2-rail.png" width="30%" /> 
+  <img src="example/2026-01-3-bus.png" width="30%" />
 </p>
+
+#### Data Cleaning
+Station names from the Ventra API are normalized before display:
+- Platform prefixes stripped (`SS` = State Street, `DB` = Dearborn/Downtown Branch)
+- Blue line branch suffixes stripped (e.g. `Western_O'Hare` → `Western`)
+- Underscores replaced with spaces (e.g. `Logan_Square` → `Logan Square`)
+- Hyphenated cross-streets normalized to slash (e.g. `Jackson-VanBuren` → `Jackson/VanBuren`)
+- Unidentifiable bus entries (Deadhead, route 0) excluded from route rankings but still counted toward total ride stats
+
+#### Fonts
+The visuals use [Montserrat](https://fonts.google.com/specimen/Montserrat). Font files (Regular, SemiBold, Bold, ExtraBold, Black) must be present in a `fonts/` directory. Download from Google Fonts and place the static TTF files there.
 
 ## Requirements
 - Node.js 18+ (for built-in `fetch` API)
 - A Ventra account
+- Montserrat font files in `fonts/` (see above)
 
 ## Setup
 
@@ -74,7 +94,7 @@ crontab -e
 ```
 Add this line:
 ```
-0 2 * * 0 cd /path/to/script && node ventra_scraper.js >> ventra_scraper.log 2>&1
+0 2 * * 0 cd /path/to/script && node fetch.js >> fetch.log 2>&1
 ```
 
 #### Output
@@ -83,12 +103,13 @@ The script creates/updates `ventra_transactions.json` with the following structu
 {
   "transactions": [
     {
-      "TransactionDateFormatted": "01/31/2026 9:40:59 AM",
-      "AmountFormatted": "-$2.50",
-      "TransactionType": "Use",
-      "OperatorDesc": "CTA Rail",
-      "LocationRoute": "Red-Thorndale",
-      ...
+      "formattedDate": "01/31/2026 9:40:59 AM",
+      "formattedAmount": "-$2.50",
+      "timestamp": 1738323659000,
+      "transactionType": "Use",
+      "type": "Rail",
+      "locationRoute": "Red-Thorndale",
+      "amount": -250
     }
   ],
   "lastUpdated": "2026-01-31T12:00:00.000Z",
@@ -103,8 +124,10 @@ The script creates/updates `ventra_transactions.json` with the following structu
 
 ### Generating Summary Images
 
-Run the script manually:
 ```bash
 node generate_wrapped.js 2026      # Full year
 node generate_wrapped.js 2026 1    # Specific month (January)
+node generate_wrapped.js 2026 3    # March only
 ```
+
+For monthly wraps, the personality slide shows **Most Active Day** instead of Busiest Month (since all data is already from that month).

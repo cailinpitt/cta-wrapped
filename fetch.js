@@ -274,7 +274,7 @@ const mergeTransactions = (existingData, newData) => {
             filteredCount++;
             continue;
         }
-        
+
         const cleanedTransaction = cleanTransaction(transaction);
         const key = getTransactionKey(cleanedTransaction);
         

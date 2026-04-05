@@ -1,11 +1,28 @@
 const fs = require('fs').promises;
-const { createCanvas, loadImage } = require('canvas');
+const { createCanvas, loadImage, registerFont } = require('canvas');
+
+registerFont('./fonts/Montserrat-Regular.ttf',   { family: 'Montserrat', weight: '400' });
+registerFont('./fonts/Montserrat-SemiBold.ttf',  { family: 'Montserrat', weight: '600' });
+registerFont('./fonts/Montserrat-Bold.ttf',      { family: 'Montserrat', weight: '700' });
+registerFont('./fonts/Montserrat-ExtraBold.ttf', { family: 'Montserrat', weight: '800' });
+registerFont('./fonts/Montserrat-Black.ttf',     { family: 'Montserrat', weight: '900' });
 const twemoji = require('twemoji');
 
 const CONFIG = {
     width: 1080,
-    height: 1080,
+    height: 1920,
     outputDir: 'wrapped_images'
+};
+
+const rideLabel = (count) => `${count} ${count === 1 ? 'ride' : 'rides'}`;
+
+const cleanStationName = (raw) => {
+    return raw
+        .replace(/^(SS|DB)\s+/i, '')                  // Strip platform prefixes (SS = State St, DB = Dearborn)
+        .replace(/_/g, ' ')                             // Underscores to spaces (e.g. Logan_Square → Logan Square)
+        .replace(/\s+(O'Hare|Forest Park)$/i, '')      // Strip Blue line branch direction suffixes
+        .replace(/([a-zA-Z])-([a-zA-Z])/g, '$1/$2')   // Hyphenated cross-streets to slash (Jackson-VanBuren → Jackson/VanBuren)
+        .trim();
 };
 
 const getWeekNumber = (date) => {
@@ -34,7 +51,8 @@ const analyzeVentraData = (data) => {
             byMonth: {},
             byDayOfWeek: {},
             byHour: {},
-            byWeek: {}
+            byWeek: {},
+            byDate: {}
         },
         spending: {
             totalSpent: 0,
@@ -54,6 +72,8 @@ const analyzeVentraData = (data) => {
         stats.temporal.byDayOfWeek[dayOfWeek] = (stats.temporal.byDayOfWeek[dayOfWeek] || 0) + 1;
         stats.temporal.byHour[hour] = (stats.temporal.byHour[hour] || 0) + 1;
         stats.temporal.byWeek[weekNum] = (stats.temporal.byWeek[weekNum] || 0) + 1;
+        const dateKey = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        stats.temporal.byDate[dateKey] = (stats.temporal.byDate[dateKey] || 0) + 1;
 
         const amountDollars = Math.abs(t.amount / 100);
         stats.spending.totalSpent += amountDollars;
@@ -61,22 +81,24 @@ const analyzeVentraData = (data) => {
 
         if (t.type === 'Rail') {
             stats.rail.totalRides++;
-            
+
             const parts = t.locationRoute.split('-');
             if (parts.length >= 2) {
                 const line = parts[0];
-                const station = parts.slice(1).join('-');
-                
+                const station = cleanStationName(parts.slice(1).join('-'));
+
                 stats.rail.lines[line] = (stats.rail.lines[line] || 0) + 1;
                 stats.rail.stations[station] = (stats.rail.stations[station] || 0) + 1;
             }
         } else if (t.type === 'Bus') {
             stats.bus.totalRides++;
-            
-            const routeMatch = t.locationRoute.match(/^(\d+)/);
-            const route = routeMatch ? routeMatch[1] : t.locationRoute;
-            
-            stats.bus.routes[route] = (stats.bus.routes[route] || 0) + 1;
+
+            // Only aggregate named routes — skip unidentifiable entries (Deadhead, Default, route 0)
+            const routeMatch = t.locationRoute.match(/^([1-9]\d*)/);
+            if (routeMatch) {
+                const route = routeMatch[1];
+                stats.bus.routes[route] = (stats.bus.routes[route] || 0) + 1;
+            }
         }
     });
 
@@ -106,7 +128,7 @@ const analyzeVentraData = (data) => {
     return stats;
 };
 
-const generateInsights = (stats) => {
+const generateInsights = (stats, isMonthly = false) => {
     const insights = [];
 
     if (stats.rail.stationVisits.length > 0) {
@@ -114,7 +136,7 @@ const generateInsights = (stats) => {
         insights.push({
             title: "Your Home Station",
             value: topStation.station,
-            detail: `${topStation.count} rides`
+            detail: rideLabel(topStation.count)
         });
     }
 
@@ -123,7 +145,7 @@ const generateInsights = (stats) => {
         insights.push({
             title: "Favorite Line",
             value: `${topLine[0]} Line`,
-            detail: `${topLine[1]} rides`
+            detail: rideLabel(topLine[1])
         });
     }
 
@@ -132,7 +154,7 @@ const generateInsights = (stats) => {
         insights.push({
             title: "Go-To Bus",
             value: `#${topRoute.route}`,
-            detail: `${topRoute.count} rides`
+            detail: rideLabel(topRoute.count)
         });
     }
 
@@ -143,15 +165,24 @@ const generateInsights = (stats) => {
         insights.push({
             title: "Peak Hour",
             value: timeLabel,
-            detail: `${peakHour[1]} rides`
+            detail: rideLabel(peakHour[1])
         });
     }
 
-    if (stats.overview.busiestMonth) {
+    if (isMonthly) {
+        const busiestDate = Object.entries(stats.temporal.byDate).sort((a, b) => b[1] - a[1])[0];
+        if (busiestDate) {
+            insights.push({
+                title: "Most Active Day",
+                value: busiestDate[0],
+                detail: rideLabel(busiestDate[1])
+            });
+        }
+    } else if (stats.overview.busiestMonth) {
         insights.push({
             title: "Busiest Month",
             value: stats.overview.busiestMonth[0],
-            detail: `${stats.overview.busiestMonth[1]} rides`
+            detail: rideLabel(stats.overview.busiestMonth[1])
         });
     }
 
@@ -198,7 +229,7 @@ const createSlide = (colors) => {
 };
 
 const drawText = (ctx, text, x, y, fontSize, fontWeight = 'normal', align = 'center') => {
-    ctx.font = `${fontWeight} ${fontSize}px Arial, sans-serif`;
+    ctx.font = `${fontWeight} ${fontSize}px Montserrat`;
     ctx.fillStyle = 'white';
     ctx.textAlign = align;
     ctx.fillText(text, x, y);
@@ -220,6 +251,20 @@ const drawEmoji = async (ctx, emoji, x, y, size) => {
     }
 };
 
+const drawDecorations = async (ctx, items) => {
+    for (const item of items) {
+        ctx.save();
+        ctx.globalAlpha = item.opacity;
+        if (item.rotation) {
+            ctx.translate(item.x, item.y);
+            ctx.rotate(item.rotation);
+            ctx.translate(-item.x, -item.y);
+        }
+        await drawEmoji(ctx, item.emoji, item.x, item.y, item.size);
+        ctx.restore();
+    }
+};
+
 const roundRect = (ctx, x, y, width, height, radius) => {
     ctx.beginPath();
     ctx.moveTo(x + radius, y);
@@ -236,322 +281,407 @@ const roundRect = (ctx, x, y, width, height, radius) => {
 
 const generateOverviewImage = async (stats, period) => {
     const { canvas, ctx } = createSlide(['#667eea', '#764ba2']);
-    
-    drawText(ctx, 'CTA Wrapped', CONFIG.width / 2, 180, 80, '900');
-    drawText(ctx, period, CONFIG.width / 2, 270, 50);
-    
-    drawText(ctx, 'You took', CONFIG.width / 2, 400, 40);
-    drawText(ctx, stats.overview.totalRides.toLocaleString(), CONFIG.width / 2, 520, 110, '900');
-    drawText(ctx, 'CTA rides', CONFIG.width / 2, 610, 40);
-    
+
+    await drawDecorations(ctx, [
+        // Upper side margins
+        { emoji: '🚇', x: 75,   y: 490, size: 65, opacity: 0.10, rotation: -0.35 },
+        { emoji: '🚌', x: 1005, y: 475, size: 60, opacity: 0.10, rotation:  0.3  },
+        // Below card grid
+        { emoji: '🚇', x: 155,  y: 1680, size: 68, opacity: 0.14, rotation: -0.3  },
+        { emoji: '🎫', x: 390,  y: 1710, size: 58, opacity: 0.12, rotation:  0.2  },
+        { emoji: '✨', x: 600,  y: 1690, size: 55, opacity: 0.18                  },
+        { emoji: '🚌', x: 820,  y: 1700, size: 64, opacity: 0.13, rotation: -0.2  },
+        { emoji: '⭐', x: 260,  y: 1840, size: 48, opacity: 0.13                  },
+        { emoji: '⭐', x: 820,  y: 1855, size: 44, opacity: 0.11, rotation:  0.15 },
+        { emoji: '✨', x: 540,  y: 1860, size: 52, opacity: 0.15                  },
+    ]);
+
+    // Header
+    drawText(ctx, 'CTA Wrapped', CONFIG.width / 2, 260, 90, '900');
+    drawText(ctx, period, CONFIG.width / 2, 370, 54);
+
+    // Hero stat
+    drawText(ctx, 'You took', CONFIG.width / 2, 560, 44);
+    drawText(ctx, stats.overview.totalRides.toLocaleString(), CONFIG.width / 2, 730, 160, '900');
+    drawText(ctx, 'CTA rides', CONFIG.width / 2, 830, 44);
+
+    // Rail vs Bus split bar
+    const barX = 90, barY = 940, barW = 900, barH = 28;
+    const railFraction = stats.overview.railPercentage / 100;
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    roundRect(ctx, barX, barY, barW, barH, 14);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    roundRect(ctx, barX, barY, barW * railFraction, barH, 14);
+    ctx.fill();
+    await drawEmoji(ctx, '🚇', barX + 18, barY + 48, 30);
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.font = '26px Montserrat';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Rail ${stats.overview.railPercentage.toFixed(0)}%`, barX + 42, barY + 60);
+
+    await drawEmoji(ctx, '🚌', barX + barW - 18, barY + 48, 30);
+    ctx.textAlign = 'right';
+    ctx.fillText(`Bus ${stats.overview.busPercentage.toFixed(0)}%`, barX + barW - 42, barY + 60);
+
+    // Cards 2x2
     const cards = [
         { label: 'Total Spent', value: `$${stats.overview.totalSpent.toFixed(2)}` },
         { label: 'Avg Per Ride', value: `$${stats.overview.averagePerRide.toFixed(2)}` },
         { label: 'Rail Rides', value: stats.rail.totalRides.toString() },
         { label: 'Bus Rides', value: stats.bus.totalRides.toString() }
     ];
-    
+
     const cardWidth = 450;
-    const cardHeight = 160;
+    const cardHeight = 210;
     const spacing = 40;
-    const startY = 700;
-    
+    const startY = 1120;
+
     cards.forEach((card, i) => {
         const row = Math.floor(i / 2);
         const col = i % 2;
         const x = 90 + col * (cardWidth + spacing);
         const y = startY + row * (cardHeight + spacing);
-        
+
         ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-        roundRect(ctx, x, y, cardWidth, cardHeight, 20);
+        roundRect(ctx, x, y, cardWidth, cardHeight, 24);
         ctx.fill();
-        
+
         ctx.textAlign = 'center';
-        drawText(ctx, card.label.toUpperCase(), x + cardWidth / 2, y + 50, 24, 'normal');
-        drawText(ctx, card.value, x + cardWidth / 2, y + 110, 50, '900');
+        drawText(ctx, card.label.toUpperCase(), x + cardWidth / 2, y + 62, 26, 'normal');
+        drawText(ctx, card.value, x + cardWidth / 2, y + 145, 58, '900');
     });
-    
+
     return canvas.toBuffer('image/png');
 };
 
 const generateRailImage = async (stats, insights) => {
     const { canvas, ctx } = createSlide(['#f093fb', '#f5576c']);
-    
-    await drawEmoji(ctx, '🚇', CONFIG.width / 2, 85, 60);
-    drawText(ctx, 'Rail Journey', CONFIG.width / 2, 170, 60, '900');
-    
+
+    await drawDecorations(ctx, [
+        // Large watermark behind content
+        { emoji: '🚇', x: 880, y: 370, size: 260, opacity: 0.07, rotation: 0.25 },
+        // Bottom sparkles
+        { emoji: '✨', x: 200,  y: 1868, size: 48, opacity: 0.25 },
+        { emoji: '✨', x: 540,  y: 1878, size: 55, opacity: 0.22 },
+        { emoji: '✨', x: 880,  y: 1865, size: 44, opacity: 0.24 },
+    ]);
+
+    await drawEmoji(ctx, '🚇', CONFIG.width / 2, 230, 80);
+    drawText(ctx, 'Rail Journey', CONFIG.width / 2, 360, 70, '900');
+
     const railInsight = insights.find(i => i.title === 'Favorite Line' || i.title === 'Your Home Station');
     if (railInsight) {
-        drawText(ctx, railInsight.title, CONFIG.width / 2, 250, 35);
-        drawText(ctx, railInsight.value, CONFIG.width / 2, 330, 70, '900');
-        drawText(ctx, railInsight.detail, CONFIG.width / 2, 390, 30);
+        drawText(ctx, railInsight.title, CONFIG.width / 2, 480, 38);
+        drawText(ctx, railInsight.value, CONFIG.width / 2, 600, 90, '900');
+        drawText(ctx, railInsight.detail, CONFIG.width / 2, 668, 34);
     }
-    
+
     ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    roundRect(ctx, 90, 440, 900, 120, 20);
+    roundRect(ctx, 90, 760, 900, 160, 24);
     ctx.fill();
-    
+
     ctx.textAlign = 'left';
-    drawText(ctx, 'Total Rail Rides', 140, 485, 30, 'normal', 'left');
-    drawText(ctx, 'Unique Stations', 140, 535, 30, 'normal', 'left');
-    
+    drawText(ctx, 'Total Rail Rides', 140, 820, 32, 'normal', 'left');
+    drawText(ctx, 'Unique Stations', 140, 885, 32, 'normal', 'left');
     ctx.textAlign = 'right';
-    drawText(ctx, stats.rail.totalRides.toString(), 940, 485, 35, '900', 'right');
-    drawText(ctx, stats.overview.uniqueRailStations.toString(), 940, 535, 35, '900', 'right');
-    
-    drawText(ctx, 'Top Starting Stations', CONFIG.width / 2, 620, 40, '700');
-    
+    drawText(ctx, stats.rail.totalRides.toString(), 940, 820, 38, '900', 'right');
+    drawText(ctx, stats.overview.uniqueRailStations.toString(), 940, 885, 38, '900', 'right');
+
+    drawText(ctx, 'Top Starting Stations', CONFIG.width / 2, 1020, 42, '700');
+
     const topStations = stats.rail.stationVisits.slice(0, 5);
+    const maxStationCount = topStations[0]?.count || 1;
+
     topStations.forEach((station, i) => {
-        const y = 680 + (i * 80);
-        
+        const y = 1080 + (i * 155);
+
         ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-        roundRect(ctx, 90, y - 30, 900, 70, 12);
+        roundRect(ctx, 90, y, 900, 120, 16);
         ctx.fill();
-        
+
+        // Inline progress bar
+        const barFill = station.count / maxStationCount;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        roundRect(ctx, 90, y + 100, 900, 7, 3);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+        roundRect(ctx, 90, y + 100, 900 * barFill, 7, 3);
+        ctx.fill();
+
         ctx.textAlign = 'left';
-        drawText(ctx, `${i + 1}.`, 140, y + 8, 38, '900', 'left');
-        drawText(ctx, station.station, 200, y + 8, 35, 'normal', 'left');
-        
+        drawText(ctx, `${i + 1}.`, 130, y + 72, 40, '900', 'left');
+        drawText(ctx, station.station, 195, y + 72, 38, 'normal', 'left');
         ctx.textAlign = 'right';
-        drawText(ctx, `${station.count}`, 940, y + 8, 35, '700', 'right');
+        drawText(ctx, rideLabel(station.count), 950, y + 72, 34, '700', 'right');
     });
-    
+
     return canvas.toBuffer('image/png');
 };
 
 const generateBusImage = async (stats, insights) => {
     const { canvas, ctx } = createSlide(['#4facfe', '#00f2fe']);
-    
-    await drawEmoji(ctx, '🚌', CONFIG.width / 2, 85, 60);
-    drawText(ctx, 'Bus Routes', CONFIG.width / 2, 170, 60, '900');
-    
+
+    await drawDecorations(ctx, [
+        // Large watermark behind content
+        { emoji: '🚌', x: 860, y: 380, size: 260, opacity: 0.07, rotation: -0.2 },
+        // Bottom sparkles
+        { emoji: '✨', x: 200,  y: 1868, size: 48, opacity: 0.25 },
+        { emoji: '✨', x: 540,  y: 1878, size: 55, opacity: 0.22 },
+        { emoji: '✨', x: 880,  y: 1865, size: 44, opacity: 0.24 },
+    ]);
+
+    await drawEmoji(ctx, '🚌', CONFIG.width / 2, 230, 80);
+    drawText(ctx, 'Bus Routes', CONFIG.width / 2, 360, 70, '900');
+
     const busInsight = insights.find(i => i.title === 'Go-To Bus');
     if (busInsight) {
-        drawText(ctx, busInsight.title, CONFIG.width / 2, 250, 35);
-        drawText(ctx, busInsight.value, CONFIG.width / 2, 330, 70, '900');
-        drawText(ctx, busInsight.detail, CONFIG.width / 2, 390, 30);
+        drawText(ctx, busInsight.title, CONFIG.width / 2, 480, 38);
+        drawText(ctx, busInsight.value, CONFIG.width / 2, 600, 90, '900');
+        drawText(ctx, busInsight.detail, CONFIG.width / 2, 668, 34);
     }
-    
+
     ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    roundRect(ctx, 90, 440, 900, 120, 20);
+    roundRect(ctx, 90, 760, 900, 160, 24);
     ctx.fill();
-    
+
     ctx.textAlign = 'left';
-    drawText(ctx, 'Total Bus Rides', 140, 485, 30, 'normal', 'left');
-    drawText(ctx, 'Unique Routes', 140, 535, 30, 'normal', 'left');
-    
+    drawText(ctx, 'Total Bus Rides', 140, 820, 32, 'normal', 'left');
+    drawText(ctx, 'Unique Routes', 140, 885, 32, 'normal', 'left');
     ctx.textAlign = 'right';
-    drawText(ctx, stats.bus.totalRides.toString(), 940, 485, 35, '900', 'right');
-    drawText(ctx, stats.overview.uniqueBusRoutes.toString(), 940, 535, 35, '900', 'right');
-    
-    drawText(ctx, 'Top Routes', CONFIG.width / 2, 620, 40, '700');
-    
+    drawText(ctx, stats.bus.totalRides.toString(), 940, 820, 38, '900', 'right');
+    drawText(ctx, stats.overview.uniqueBusRoutes.toString(), 940, 885, 38, '900', 'right');
+
+    drawText(ctx, 'Top Routes', CONFIG.width / 2, 1020, 42, '700');
+
     const topRoutes = stats.bus.routeUsage.slice(0, 5);
+    const maxRouteCount = topRoutes[0]?.count || 1;
+
     topRoutes.forEach((route, i) => {
-        const y = 680 + (i * 80);
-        
+        const y = 1080 + (i * 155);
+
         ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-        roundRect(ctx, 90, y - 30, 900, 70, 12);
+        roundRect(ctx, 90, y, 900, 120, 16);
         ctx.fill();
-        
+
+        // Inline progress bar
+        const barFill = route.count / maxRouteCount;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        roundRect(ctx, 90, y + 100, 900, 7, 3);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+        roundRect(ctx, 90, y + 100, 900 * barFill, 7, 3);
+        ctx.fill();
+
         ctx.textAlign = 'left';
-        drawText(ctx, `${i + 1}.`, 140, y + 8, 38, '900', 'left');
-        drawText(ctx, `Route ${route.route}`, 200, y + 8, 35, 'normal', 'left');
-        
+        drawText(ctx, `${i + 1}.`, 130, y + 72, 40, '900', 'left');
+        drawText(ctx, `Route ${route.route}`, 195, y + 72, 38, 'normal', 'left');
         ctx.textAlign = 'right';
-        drawText(ctx, `${route.count}`, 940, y + 8, 35, '700', 'right');
+        drawText(ctx, rideLabel(route.count), 950, y + 72, 34, '700', 'right');
     });
-    
+
     return canvas.toBuffer('image/png');
 };
 
 const generateTimeOfDayImage = async (stats) => {
     const { canvas, ctx } = createSlide(['#a8edea', '#fed6e3']);
-    
-    await drawEmoji(ctx, '⏰', CONFIG.width / 2, 100, 60);
-    drawText(ctx, 'When You Ride', CONFIG.width / 2, 180, 60, '900');
-    
-    // Find peak hour
+
+    await drawDecorations(ctx, [
+        // Left margin alongside the chart
+        { emoji: '⭐', x: 90,  y: 980,  size: 50, opacity: 0.30, rotation:  0.2  },
+        { emoji: '✨', x: 85,  y: 1220, size: 55, opacity: 0.28, rotation: -0.2  },
+        { emoji: '⭐', x: 88,  y: 1480, size: 48, opacity: 0.26                  },
+        // Right margin
+        { emoji: '✨', x: 990, y: 1060, size: 52, opacity: 0.29, rotation:  0.3  },
+        { emoji: '⭐', x: 992, y: 1320, size: 50, opacity: 0.27, rotation: -0.2  },
+        { emoji: '✨', x: 988, y: 1580, size: 48, opacity: 0.25                  },
+    ]);
+
+    await drawEmoji(ctx, '⏰', CONFIG.width / 2, 150, 80);
+    drawText(ctx, 'When You Ride', CONFIG.width / 2, 280, 70, '900');
+
     const peakHour = Object.entries(stats.temporal.byHour).sort((a, b) => b[1] - a[1])[0];
     if (peakHour) {
         const hour = parseInt(peakHour[0]);
-        const timeLabel = hour < 12 ? `${hour}AM` : hour === 12 ? '12PM' : `${hour - 12}PM`;
-        
-        drawText(ctx, 'Most Active Hour', CONFIG.width / 2, 280, 35);
-        drawText(ctx, timeLabel, CONFIG.width / 2, 360, 90, '900');
-        drawText(ctx, `${peakHour[1]} rides`, CONFIG.width / 2, 420, 30);
+        const timeLabel = hour === 0 ? '12AM' : hour < 12 ? `${hour}AM` : hour === 12 ? '12PM' : `${hour - 12}PM`;
+
+        drawText(ctx, 'Most Active Hour', CONFIG.width / 2, 390, 38);
+        drawText(ctx, timeLabel, CONFIG.width / 2, 560, 160, '900');
+        drawText(ctx, rideLabel(peakHour[1]), CONFIG.width / 2, 640, 34);
     }
-    
-    // Hourly heat map
-    drawText(ctx, '24-Hour Activity', CONFIG.width / 2, 520, 40, '700');
-    
+
+    drawText(ctx, '24-Hour Activity', CONFIG.width / 2, 740, 44, '700');
+
     const maxHourlyRides = Math.max(...Object.values(stats.temporal.byHour));
     const barWidth = 35;
     const barSpacing = 5;
-    const maxBarHeight = 280;
+    const baseY = 1840;
+    const chartTopY = 800;
+    const maxBarHeight = baseY - chartTopY;
     const startX = 65;
-    const baseY = 950;
-    
+
     for (let hour = 0; hour < 24; hour++) {
         const rides = stats.temporal.byHour[hour] || 0;
-        const barHeight = maxHourlyRides > 0 ? (rides / maxHourlyRides) * maxBarHeight : 0;
         const x = startX + (hour * (barWidth + barSpacing));
-        
-        // Color based on intensity (gradient from light to bright)
-        const intensity = maxHourlyRides > 0 ? rides / maxHourlyRides : 0;
-        const r = Math.floor(255 - (intensity * 100));
-        const g = Math.floor(255 - (intensity * 80));
-        const b = 255;
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
-        
-        // Draw bar
-        roundRect(ctx, x, baseY - barHeight, barWidth, barHeight, 4);
+
+        // Ghost bar for all hours (gives the chart visual structure)
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        roundRect(ctx, x, chartTopY, barWidth, maxBarHeight, 5);
         ctx.fill();
-        
-        // Hour labels (every 3 hours)
+
+        if (rides > 0) {
+            const barHeight = Math.max((rides / maxHourlyRides) * maxBarHeight, 10);
+            const intensity = rides / maxHourlyRides;
+
+            // Teal (low) to rose (high) — matches the slide gradient palette
+            const r = Math.floor(100 + intensity * 155);
+            const g = Math.floor(200 - intensity * 80);
+            const b = Math.floor(210 - intensity * 120);
+            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.85)`;
+
+            roundRect(ctx, x, baseY - barHeight, barWidth, barHeight, 5);
+            ctx.fill();
+        }
+
         if (hour % 3 === 0) {
-            const timeLabel = hour === 0 ? '12A' : hour < 12 ? `${hour}A` : hour === 12 ? '12P' : `${hour-12}P`;
-            ctx.fillStyle = 'white';
-            ctx.font = '18px Arial, sans-serif';
+            const timeLabel = hour === 0 ? '12A' : hour < 12 ? `${hour}A` : hour === 12 ? '12P' : `${hour - 12}P`;
+            ctx.fillStyle = 'rgba(0,0,0,0.35)';
+            ctx.font = '20px Montserrat';
             ctx.textAlign = 'center';
-            ctx.fillText(timeLabel, x + barWidth/2, baseY + 25);
+            ctx.fillText(timeLabel, x + barWidth / 2, baseY + 30);
         }
     }
-    
+
     return canvas.toBuffer('image/png');
 };
 
 const generateDayOfWeekImage = async (stats) => {
     const { canvas, ctx } = createSlide(['#ff9a9e', '#fecfef']);
-    
-    await drawEmoji(ctx, '📅', CONFIG.width / 2, 100, 60);
-    drawText(ctx, 'Your Week', CONFIG.width / 2, 180, 60, '900');
-    
-    // Find busiest day
+
+    await drawDecorations(ctx, [
+        // Side margins alongside the bar chart
+        { emoji: '✨', x: 48,   y: 1200, size: 42, opacity: 0.16, rotation: -0.2  },
+        { emoji: '⭐', x: 44,   y: 1450, size: 38, opacity: 0.14                  },
+        { emoji: '✨', x: 1038, y: 1300, size: 40, opacity: 0.15, rotation:  0.25 },
+        { emoji: '⭐', x: 1035, y: 1560, size: 36, opacity: 0.13, rotation: -0.1  },
+        // Bottom
+        { emoji: '🎉', x: 200,  y: 1868, size: 52, opacity: 0.15, rotation: -0.3  },
+        { emoji: '✨', x: 540,  y: 1875, size: 50, opacity: 0.18                  },
+        { emoji: '🎉', x: 880,  y: 1870, size: 50, opacity: 0.14, rotation:  0.25 },
+    ]);
+
+    await drawEmoji(ctx, '📅', CONFIG.width / 2, 230, 80);
+    drawText(ctx, 'Your Week', CONFIG.width / 2, 360, 70, '900');
+
     const busiestDay = stats.overview.busiestDay;
     if (busiestDay) {
-        drawText(ctx, 'Busiest Day', CONFIG.width / 2, 280, 35);
-        drawText(ctx, busiestDay[0], CONFIG.width / 2, 360, 80, '900');
-        drawText(ctx, `${busiestDay[1]} rides`, CONFIG.width / 2, 420, 30);
+        drawText(ctx, 'Busiest Day', CONFIG.width / 2, 480, 38);
+        drawText(ctx, busiestDay[0], CONFIG.width / 2, 640, 110, '900');
+        drawText(ctx, rideLabel(busiestDay[1]), CONFIG.width / 2, 720, 34);
     }
-    
-    // Days of week ordered
+
     const daysOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     const dayData = daysOrder.map(day => ({
         day,
         count: stats.temporal.byDayOfWeek[day] || 0
     }));
-    
-    // Weekday vs Weekend summary
+
     const weekdayRides = dayData.slice(0, 5).reduce((sum, d) => sum + d.count, 0);
     const weekendRides = dayData.slice(5, 7).reduce((sum, d) => sum + d.count, 0);
-    
+
     ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
-    roundRect(ctx, 90, 480, 900, 120, 20);  // Moved up and made smaller
+    roundRect(ctx, 90, 800, 900, 160, 24);
     ctx.fill();
-    
+
     ctx.textAlign = 'left';
-    drawText(ctx, 'Weekday Rides', 140, 520, 30, 'normal', 'left');  // Adjusted
-    drawText(ctx, 'Weekend Rides', 140, 570, 30, 'normal', 'left');  // Adjusted
-    
+    drawText(ctx, 'Weekday Rides', 140, 860, 32, 'normal', 'left');
+    drawText(ctx, 'Weekend Rides', 140, 922, 32, 'normal', 'left');
     ctx.textAlign = 'right';
-    drawText(ctx, weekdayRides.toString(), 940, 520, 35, '900', 'right');  // Adjusted
-    drawText(ctx, weekendRides.toString(), 940, 570, 35, '900', 'right');  // Adjusted
-    
-    // Visual bar chart for each day
-    drawText(ctx, 'Daily Activity', CONFIG.width / 2, 650, 40, '700');  // Moved up
-    
+    drawText(ctx, weekdayRides.toString(), 940, 860, 38, '900', 'right');
+    drawText(ctx, weekendRides.toString(), 940, 922, 38, '900', 'right');
+
+    drawText(ctx, 'Daily Activity', CONFIG.width / 2, 1060, 42, '700');
+
     const maxDayRides = Math.max(...dayData.map(d => d.count));
-    const barMaxWidth = 750;
-    const barHeight = 45;  // Slightly smaller
-    const startY = 700;  // Moved up
-    
+    const barMaxWidth = 680;
+    const barHeight = 72;
+    const startY = 1110;
+    const rowSpacing = 108;
+
     dayData.forEach((d, i) => {
-        const y = startY + (i * 55);  // Reduced spacing
+        const y = startY + (i * rowSpacing);
         const barWidth = maxDayRides > 0 ? (d.count / maxDayRides) * barMaxWidth : 0;
-        
+
         // Background track
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
-        roundRect(ctx, 240, y, barMaxWidth, barHeight, 8);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+        roundRect(ctx, 240, y, barMaxWidth, barHeight, 10);
         ctx.fill();
-        
-        // Filled bar with gradient color based on intensity
+
+        // Bar — white opacity scaled by intensity so the busiest day is brightest
         const intensity = maxDayRides > 0 ? d.count / maxDayRides : 0;
-        const r = Math.floor(255 - (intensity * 60));
-        const g = Math.floor(100 + (intensity * 100));
-        const b = Math.floor(150 + (intensity * 100));
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
-        roundRect(ctx, 240, y, barWidth, barHeight, 8);
-        ctx.fill();
-        
-        // Day label
+        ctx.fillStyle = `rgba(255, 255, 255, ${0.25 + intensity * 0.5})`;
+        if (barWidth > 0) {
+            roundRect(ctx, 240, y, barWidth, barHeight, 10);
+            ctx.fill();
+        }
+
         ctx.fillStyle = 'white';
         ctx.textAlign = 'left';
-        ctx.font = 'bold 26px Arial, sans-serif';  // Slightly smaller
-        ctx.fillText(d.day.substring(0, 3), 100, y + 30);  // Adjusted
-        
-        // Count at end of bar
-        if (barWidth > 80) {
+        ctx.font = 'bold 30px Montserrat';
+        ctx.fillText(d.day.substring(0, 3), 90, y + 47);
+
+        ctx.font = 'bold 28px Montserrat';
+        if (barWidth > 90) {
             ctx.textAlign = 'right';
-            ctx.font = 'bold 24px Arial, sans-serif';  // Slightly smaller
-            ctx.fillText(d.count.toString(), 230 + barWidth, y + 30);  // Adjusted
+            ctx.fillText(d.count.toString(), 228 + barWidth, y + 47);
         } else {
             ctx.textAlign = 'left';
-            ctx.font = 'bold 24px Arial, sans-serif';  // Slightly smaller
-            ctx.fillText(d.count.toString(), 250 + barWidth, y + 30);  // Adjusted
+            ctx.fillText(d.count.toString(), 248 + barWidth, y + 47);
         }
     });
-    
+
     return canvas.toBuffer('image/png');
 };
 
 const generatePersonalityImage = async (stats, insights) => {
     const { canvas, ctx } = createSlide(['#fa709a', '#fee140']);
-    
-    drawText(ctx, 'Your Transit Personality', CONFIG.width / 2, 120, 55, '900');
-    
-    const keyInsights = insights.slice(0, 3);
-    keyInsights.forEach((insight, i) => {
-        const y = 220 + (i * 190);
-        
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';  // Slightly more opaque
-        roundRect(ctx, 90, y - 60, 900, 160, 20);
+
+    await drawDecorations(ctx, [
+        // Side margins alongside the insight cards
+        { emoji: '✨', x: 48,   y: 550,  size: 40, opacity: 0.18, rotation: -0.2  },
+        { emoji: '⭐', x: 44,   y: 860,  size: 38, opacity: 0.15                  },
+        { emoji: '✨', x: 46,   y: 1160, size: 42, opacity: 0.16, rotation:  0.2  },
+        { emoji: '⭐', x: 1038, y: 660,  size: 38, opacity: 0.15, rotation: -0.15 },
+        { emoji: '✨', x: 1035, y: 970,  size: 40, opacity: 0.17                  },
+        { emoji: '⭐', x: 1037, y: 1270, size: 36, opacity: 0.14, rotation:  0.2  },
+        // Between last card and footer
+        { emoji: '🎉', x: 200,  y: 1730, size: 55, opacity: 0.15, rotation: -0.3  },
+        { emoji: '✨', x: 540,  y: 1738, size: 58, opacity: 0.18                  },
+        { emoji: '🎉', x: 880,  y: 1732, size: 52, opacity: 0.14, rotation:  0.3  },
+    ]);
+
+    drawText(ctx, 'Your Transit', CONFIG.width / 2, 200, 70, '900');
+    drawText(ctx, 'Personality', CONFIG.width / 2, 290, 70, '900');
+
+    // Show all 6 insights
+    insights.forEach((insight, i) => {
+        const y = 410 + (i * 218);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+        roundRect(ctx, 90, y, 900, 182, 20);
         ctx.fill();
-        
+
         ctx.textAlign = 'center';
-        drawText(ctx, insight.title.toUpperCase(), CONFIG.width / 2, y - 10, 28, 'normal');
-        drawText(ctx, insight.value, CONFIG.width / 2, y + 45, 55, '900');
-        drawText(ctx, insight.detail, CONFIG.width / 2, y + 90, 30);
+        drawText(ctx, insight.title.toUpperCase(), CONFIG.width / 2, y + 48, 26, 'normal');
+        drawText(ctx, insight.value, CONFIG.width / 2, y + 118, 54, '900');
+        drawText(ctx, insight.detail, CONFIG.width / 2, y + 162, 28);
     });
-    
-    const footerY = 820;
-    drawText(ctx, 'Thanks for riding!', CONFIG.width / 2, footerY, 45, '900');
-    await drawEmoji(ctx, '🚇', CONFIG.width / 2 - 50, footerY + 65, 50);
-    await drawEmoji(ctx, '🚌', CONFIG.width / 2 + 50, footerY + 65, 50);
-    
-    const badges = [
-        { emoji: '💰', text: `$${stats.overview.totalSpent.toFixed(0)}` },
-        { emoji: '📍', text: `${stats.overview.uniqueRailStations}` },
-        { emoji: '🚏', text: `${stats.overview.uniqueBusRoutes}` }
-    ];
-    
-    const badgeY = footerY + 170;
-    const badgeSpacing = 310;
-    const badgeStartX = (CONFIG.width - (badges.length * badgeSpacing - 30)) / 2;
-    
-    for (let i = 0; i < badges.length; i++) {
-        const badge = badges[i];
-        const x = badgeStartX + (i * badgeSpacing);
-        
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';  // Slightly darker
-        roundRect(ctx, x, badgeY - 25, 280, 60, 30);
-        ctx.fill();
-        
-        await drawEmoji(ctx, badge.emoji, x + 60, badgeY, 35);
-        drawText(ctx, badge.text, x + 180, badgeY + 10, 28);
-    }
-    
+
+    // Footer
+    drawText(ctx, 'Thanks for riding!', CONFIG.width / 2, 1790, 46, '900');
+    await drawEmoji(ctx, '🚇', CONFIG.width / 2 - 55, 1865, 52);
+    await drawEmoji(ctx, '🚌', CONFIG.width / 2 + 55, 1865, 52);
+
     return canvas.toBuffer('image/png');
 };
 
@@ -569,7 +699,7 @@ const generateWrapped = async (year, month = null) => {
         
         const data = { ...rawData, transactions: filteredTransactions };
         const stats = analyzeVentraData(data);
-        const insights = generateInsights(stats);
+        const insights = generateInsights(stats, month !== null);
         
         const period = month 
             ? `${new Date(year, month - 1).toLocaleString('en-US', { month: 'long' })} ${year}`
