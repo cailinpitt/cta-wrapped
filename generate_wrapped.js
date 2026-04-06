@@ -26,8 +26,10 @@ const cleanStationName = (raw) => {
 };
 
 const getWeekNumber = (date) => {
-    const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
-    const pastDaysOfYear = (date - firstDayOfYear) / 86400000;
+    // Snap to local midnight so intra-day timestamps don't produce fractional day counts
+    const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const firstDayOfYear = new Date(d.getFullYear(), 0, 1);
+    const pastDaysOfYear = Math.round((d - firstDayOfYear) / 86400000);
     return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
 };
 
@@ -197,14 +199,31 @@ const generateInsights = (stats, isMonthly = false) => {
     return insights;
 };
 
-const filterByPeriod = (transactions, year, month = null) => {
+/** Returns the Monday and Sunday of the given week number in the given year */
+const getWeekDateRange = (year, weekNum) => {
+    const jan1 = new Date(year, 0, 1);
+    const startWeek = getWeekNumber(jan1);
+    const daysOffset = (weekNum - startWeek) * 7;
+    const dayInWeek = new Date(year, 0, 1 + daysOffset);
+
+    const dow = dayInWeek.getDay(); // 0 = Sun
+    const toMonday = dow === 0 ? -6 : 1 - dow;
+    const monday = new Date(dayInWeek);
+    monday.setDate(dayInWeek.getDate() + toMonday);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return { start: monday, end: sunday };
+};
+
+const filterByPeriod = (transactions, year, month = null, week = null) => {
     return transactions.filter(t => {
         const date = new Date(t.timestamp);
         const txYear = date.getFullYear();
-        const txMonth = date.getMonth() + 1;
-        
-        if (month) {
-            return txYear === year && txMonth === month;
+
+        if (week !== null) {
+            return txYear === year && getWeekNumber(date) === week;
+        } else if (month) {
+            return txYear === year && date.getMonth() + 1 === month;
         } else {
             return txYear === year;
         }
@@ -685,29 +704,38 @@ const generatePersonalityImage = async (stats, insights) => {
     return canvas.toBuffer('image/png');
 };
 
-const generateWrapped = async (year, month = null) => {
+const generateWrapped = async (year, month = null, week = null) => {
     try {
         await fs.mkdir(CONFIG.outputDir, { recursive: true });
-        
+
         const rawData = JSON.parse(await fs.readFile('./ventra_transactions.json', 'utf-8'));
-        const filteredTransactions = filterByPeriod(rawData.transactions, year, month);
-        
+        const filteredTransactions = filterByPeriod(rawData.transactions, year, month, week);
+
         if (filteredTransactions.length === 0) {
-            console.log(`No transactions found for ${year}${month ? `-${month.toString().padStart(2, '0')}` : ''}`);
+            let label = year.toString();
+            if (week !== null) label += `-w${week.toString().padStart(2, '0')}`;
+            else if (month) label += `-${month.toString().padStart(2, '0')}`;
+            console.log(`No transactions found for ${label}`);
             return;
         }
-        
+
         const data = { ...rawData, transactions: filteredTransactions };
         const stats = analyzeVentraData(data);
-        const insights = generateInsights(stats, month !== null);
-        
-        const period = month 
-            ? `${new Date(year, month - 1).toLocaleString('en-US', { month: 'long' })} ${year}`
-            : year.toString();
-        
-        const filePrefix = month 
-            ? `${year}-${month.toString().padStart(2, '0')}`
-            : `${year}`;
+        const insights = generateInsights(stats, month !== null || week !== null);
+
+        let period, filePrefix;
+        if (week !== null) {
+            const { start, end } = getWeekDateRange(year, week);
+            const fmt = { month: 'short', day: 'numeric' };
+            period = `${start.toLocaleDateString('en-US', fmt)} – ${end.toLocaleDateString('en-US', { ...fmt, year: 'numeric' })}`;
+            filePrefix = `${year}-w${week.toString().padStart(2, '0')}`;
+        } else if (month) {
+            period = `${new Date(year, month - 1).toLocaleString('en-US', { month: 'long' })} ${year}`;
+            filePrefix = `${year}-${month.toString().padStart(2, '0')}`;
+        } else {
+            period = year.toString();
+            filePrefix = `${year}`;
+        }
         
         console.log(`\nGenerating CTA Wrapped for ${period}...`);
         console.log(`Total transactions: ${filteredTransactions.length}\n`);
@@ -742,10 +770,18 @@ if (args.length === 0) {
     console.log('  node generate_wrapped.js 2026          # Full year');
     console.log('  node generate_wrapped.js 2026 1        # Specific month (January)');
     console.log('  node generate_wrapped.js 2026 12       # December');
+    console.log('  node generate_wrapped.js 2026 w14      # Week 14');
 } else {
     const year = parseInt(args[0]);
-    const month = args[1] ? parseInt(args[1]) : null;
-    generateWrapped(year, month);
+    const arg2 = args[1] || null;
+
+    if (arg2 && /^w\d+$/i.test(arg2)) {
+        const week = parseInt(arg2.slice(1));
+        generateWrapped(year, null, week);
+    } else {
+        const month = arg2 ? parseInt(arg2) : null;
+        generateWrapped(year, month);
+    }
 }
 
 module.exports = { generateWrapped, analyzeVentraData, generateInsights };
