@@ -298,409 +298,694 @@ const roundRect = (ctx, x, y, width, height, radius) => {
     ctx.closePath();
 };
 
+// ============================================================================
+// Design system: Wrapped-style art
+// ============================================================================
+
+const PALETTES = [
+    { name: 'acid',    bg: '#0E0E0E', primary: '#FAFF00', secondary: '#FF3B7C', accent: '#00E0FF', ink: '#FAFF00' },
+    { name: 'plasma',  bg: '#1A0033', primary: '#FF006E', secondary: '#FFBE0B', accent: '#3A86FF', ink: '#FFFFFF' },
+    { name: 'vapor',   bg: '#1B0033', primary: '#FF00C8', secondary: '#00FFE0', accent: '#FFE600', ink: '#FFFFFF' },
+    { name: 'mint',    bg: '#2E1A47', primary: '#00FF88', secondary: '#FF4E50', accent: '#FFE7A0', ink: '#FFFFFF' },
+    { name: 'solar',   bg: '#003566', primary: '#FFD60A', secondary: '#FF4500', accent: '#FFFFFF', ink: '#FFFFFF' },
+    { name: 'noir',    bg: '#FAFF00', primary: '#0E0E0E', secondary: '#FF3B7C', accent: '#00E0FF', ink: '#0E0E0E' },
+    { name: 'magma',   bg: '#FF4500', primary: '#1A1A1A', secondary: '#FFD60A', accent: '#FFFFFF', ink: '#1A1A1A' },
+    { name: 'electric',bg: '#3A86FF', primary: '#FFE600', secondary: '#FF006E', accent: '#FFFFFF', ink: '#0E0E0E' },
+];
+
+const hashSeed = (str) => {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+    return Math.abs(h);
+};
+
+const seededRng = (seed) => {
+    let a = seed | 0;
+    return () => {
+        a = (a + 0x6D2B79F5) | 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+};
+
+const pickPalette = (seedStr) => PALETTES[hashSeed(seedStr) % PALETTES.length];
+
+const fillBg = (ctx, color) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+};
+
+/** Cheap film-grain via scattered semi-transparent specks */
+const applyGrain = (ctx, count = 5500) => {
+    for (let i = 0; i < count; i++) {
+        const x = Math.random() * CONFIG.width;
+        const y = Math.random() * CONFIG.height;
+        const size = Math.random() * 1.8 + 0.4;
+        const light = Math.random() > 0.5;
+        const alpha = Math.random() * 0.18;
+        ctx.fillStyle = light ? `rgba(255,255,255,${alpha})` : `rgba(0,0,0,${alpha})`;
+        ctx.fillRect(x, y, size, size);
+    }
+};
+
+/** Organic blob shape */
+const drawBlob = (ctx, cx, cy, baseR, color, seed = 1) => {
+    const rng = seededRng(seed);
+    const points = 9;
+    const angles = [];
+    const radii = [];
+    for (let i = 0; i < points; i++) {
+        angles.push((i / points) * Math.PI * 2);
+        radii.push(baseR * (0.78 + rng() * 0.42));
+    }
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (let i = 0; i <= points; i++) {
+        const cur = i % points;
+        const next = (i + 1) % points;
+        const x = cx + Math.cos(angles[cur]) * radii[cur];
+        const y = cy + Math.sin(angles[cur]) * radii[cur];
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            const ma = (angles[cur] + angles[next]) / 2;
+            const mr = (radii[cur] + radii[next]) / 2 * 1.08;
+            ctx.quadraticCurveTo(
+                cx + Math.cos(ma) * mr,
+                cy + Math.sin(ma) * mr,
+                cx + Math.cos(angles[next]) * radii[next],
+                cy + Math.sin(angles[next]) * radii[next]
+            );
+        }
+    }
+    ctx.closePath();
+    ctx.fill();
+};
+
+/** Star/burst shape (sticker) */
+const drawStar = (ctx, cx, cy, points, outerR, innerR, color, rotation = 0) => {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(rotation);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (let i = 0; i < points * 2; i++) {
+        const r = i % 2 === 0 ? outerR : innerR;
+        const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+        const x = Math.cos(a) * r;
+        const y = Math.sin(a) * r;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+};
+
+/** Sine-wave squiggle line */
+const drawSquiggle = (ctx, x, y, length, amplitude, waves, color, lineWidth = 10) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i <= length; i += 2) {
+        const wy = y + Math.sin((i / length) * Math.PI * 2 * waves) * amplitude;
+        if (i === 0) ctx.moveTo(x + i, wy);
+        else ctx.lineTo(x + i, wy);
+    }
+    ctx.stroke();
+};
+
+/** Rotated text with full styling control */
+const drawRotated = (ctx, text, x, y, angle, fontSize, weight, color, align = 'center') => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.font = `${weight} ${fontSize}px Montserrat`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 0, 0);
+    ctx.restore();
+};
+
+/** Sticker tag: pill background with text inside */
+const drawTag = (ctx, text, cx, cy, fontSize, weight, bgColor, fgColor, angle = 0, padding = 24) => {
+    ctx.save();
+    ctx.font = `${weight} ${fontSize}px Montserrat`;
+    const m = ctx.measureText(text);
+    const w = m.width + padding * 2;
+    const h = fontSize * 1.35;
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.fillStyle = bgColor;
+    roundRect(ctx, -w / 2, -h / 2, w, h, h / 2);
+    ctx.fill();
+    ctx.fillStyle = fgColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 0, fontSize * 0.05);
+    ctx.restore();
+};
+
+/** Hero number/text that auto-fits to a max width */
+const drawHero = (ctx, text, cx, cy, maxWidth, maxFontSize, weight, color, angle = 0) => {
+    let fs = maxFontSize;
+    ctx.font = `${weight} ${fs}px Montserrat`;
+    while (ctx.measureText(text).width > maxWidth && fs > 60) {
+        fs -= 10;
+        ctx.font = `${weight} ${fs}px Montserrat`;
+    }
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 0, 0);
+    ctx.restore();
+    return fs;
+};
+
+/** Outlined hero text (stroke only) */
+const drawHeroOutline = (ctx, text, cx, cy, maxWidth, maxFontSize, weight, color, lineWidth, angle = 0) => {
+    let fs = maxFontSize;
+    ctx.font = `${weight} ${fs}px Montserrat`;
+    while (ctx.measureText(text).width > maxWidth && fs > 60) {
+        fs -= 10;
+        ctx.font = `${weight} ${fs}px Montserrat`;
+    }
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineJoin = 'round';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeText(text, 0, 0);
+    ctx.restore();
+    return fs;
+};
+
 const generateOverviewImage = async (stats, period) => {
-    const { canvas, ctx } = createSlide(['#667eea', '#764ba2']);
+    const palette = pickPalette(period);
+    const rng = seededRng(hashSeed(period));
+    const canvas = createCanvas(CONFIG.width, CONFIG.height);
+    const ctx = canvas.getContext('2d');
+    const W = CONFIG.width, H = CONFIG.height;
 
-    await drawDecorations(ctx, [
-        // Upper side margins
-        { emoji: '🚇', x: 75,   y: 490, size: 65, opacity: 0.10, rotation: -0.35 },
-        { emoji: '🚌', x: 1005, y: 475, size: 60, opacity: 0.10, rotation:  0.3  },
-        // Below card grid
-        { emoji: '🚇', x: 155,  y: 1680, size: 68, opacity: 0.14, rotation: -0.3  },
-        { emoji: '🎫', x: 390,  y: 1710, size: 58, opacity: 0.12, rotation:  0.2  },
-        { emoji: '✨', x: 600,  y: 1690, size: 55, opacity: 0.18                  },
-        { emoji: '🚌', x: 820,  y: 1700, size: 64, opacity: 0.13, rotation: -0.2  },
-        { emoji: '⭐', x: 260,  y: 1840, size: 48, opacity: 0.13                  },
-        { emoji: '⭐', x: 820,  y: 1855, size: 44, opacity: 0.11, rotation:  0.15 },
-        { emoji: '✨', x: 540,  y: 1860, size: 52, opacity: 0.15                  },
-    ]);
+    fillBg(ctx, palette.bg);
 
-    // Header
-    drawText(ctx, 'CTA Wrapped', CONFIG.width / 2, 260, 90, '900');
-    drawText(ctx, period, CONFIG.width / 2, 370, 54);
+    // Backdrop blobs (off-canvas anchored)
+    drawBlob(ctx, W * 1.05, H * 0.18, 520, palette.secondary, hashSeed(period + 'b1'));
+    drawBlob(ctx, -W * 0.1, H * 0.78, 460, palette.accent, hashSeed(period + 'b2'));
 
-    // Hero stat
-    drawText(ctx, 'You took', CONFIG.width / 2, 560, 44);
-    drawText(ctx, stats.overview.totalRides.toLocaleString(), CONFIG.width / 2, 730, 160, '900');
-    drawText(ctx, 'CTA rides', CONFIG.width / 2, 830, 44);
+    // Header tag
+    drawTag(ctx, 'CTA WRAPPED', W / 2, 150, 44, '900', palette.primary, palette.bg, -0.04, 36);
+    drawRotated(ctx, period.toUpperCase(), W / 2, 235, -0.04, 38, '700', palette.ink);
 
-    // Rail vs Bus split bar
-    const barX = 90, barY = 940, barW = 900, barH = 28;
-    const railFraction = stats.overview.railPercentage / 100;
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    roundRect(ctx, barX, barY, barW, barH, 14);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    roundRect(ctx, barX, barY, barW * railFraction, barH, 14);
-    ctx.fill();
-    await drawEmoji(ctx, '🚇', barX + 18, barY + 48, 30);
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.font = '26px Montserrat';
+    // Hero ride count — fills the canvas
+    const totalStr = stats.overview.totalRides.toLocaleString();
+    drawHero(ctx, totalStr, W / 2 + 8, 720, W * 0.92, 820, '900', palette.primary, -0.025);
+    drawHeroOutline(ctx, totalStr, W / 2 - 14, 712, W * 0.92, 820, '900', palette.secondary, 6, -0.025);
+
+    // Below-hero label
+    drawTag(ctx, 'RIDES', W / 2 - 160, 1110, 56, '900', palette.bg, palette.primary, 0.03, 40);
+    drawTag(ctx, 'TAKEN', W / 2 + 170, 1110, 56, '900', palette.secondary, palette.bg, -0.03, 40);
+
+    // Squiggle separator
+    drawSquiggle(ctx, 100, 1240, 880, 14, 6, palette.accent, 8);
+
+    // Hard color-block split bar (rail vs bus)
+    const splitY = 1320, splitH = 240;
+    const railFrac = Math.max(0.08, Math.min(0.92, stats.overview.railPercentage / 100));
+    ctx.fillStyle = palette.primary;
+    ctx.fillRect(0, splitY, W * railFrac, splitH);
+    ctx.fillStyle = palette.secondary;
+    ctx.fillRect(W * railFrac, splitY, W * (1 - railFrac), splitH);
+
+    // Rail label inside primary block
+    ctx.save();
+    ctx.fillStyle = palette.bg;
+    ctx.font = '900 36px Montserrat';
     ctx.textAlign = 'left';
-    ctx.fillText(`Rail ${stats.overview.railPercentage.toFixed(0)}%`, barX + 42, barY + 60);
+    ctx.textBaseline = 'top';
+    ctx.fillText('RAIL', 38, splitY + 28);
+    ctx.font = '900 110px Montserrat';
+    ctx.fillText(`${stats.overview.railPercentage.toFixed(0)}%`, 32, splitY + 78);
+    ctx.restore();
 
-    await drawEmoji(ctx, '🚌', barX + barW - 18, barY + 48, 30);
+    // Bus label inside secondary block
+    ctx.save();
+    ctx.fillStyle = palette.bg;
+    ctx.font = '900 36px Montserrat';
     ctx.textAlign = 'right';
-    ctx.fillText(`Bus ${stats.overview.busPercentage.toFixed(0)}%`, barX + barW - 42, barY + 60);
+    ctx.textBaseline = 'top';
+    ctx.fillText('BUS', W - 38, splitY + 28);
+    ctx.font = '900 110px Montserrat';
+    ctx.fillText(`${stats.overview.busPercentage.toFixed(0)}%`, W - 28, splitY + 78);
+    ctx.restore();
 
-    // Cards 2x2
-    const cards = [
-        { label: 'Total Spent', value: `$${stats.overview.totalSpent.toFixed(2)}` },
-        { label: 'Avg Per Ride', value: `$${stats.overview.averagePerRide.toFixed(2)}` },
-        { label: 'Rail Rides', value: stats.rail.totalRides.toString() },
-        { label: 'Bus Rides', value: stats.bus.totalRides.toString() }
-    ];
+    // Bottom: spend + avg as side-by-side bold blocks
+    const blockY = 1620, blockH = 220;
+    ctx.fillStyle = palette.accent;
+    ctx.fillRect(0, blockY, W / 2, blockH);
+    ctx.fillStyle = palette.primary;
+    ctx.fillRect(W / 2, blockY, W / 2, blockH);
 
-    const cardWidth = 450;
-    const cardHeight = 210;
-    const spacing = 40;
-    const startY = 1120;
+    ctx.fillStyle = palette.bg;
+    ctx.font = '700 26px Montserrat';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('TOTAL SPENT', W / 4, blockY + 36);
+    ctx.font = '900 92px Montserrat';
+    ctx.fillText(`$${stats.overview.totalSpent.toFixed(0)}`, W / 4, blockY + 80);
 
-    cards.forEach((card, i) => {
-        const row = Math.floor(i / 2);
-        const col = i % 2;
-        const x = 90 + col * (cardWidth + spacing);
-        const y = startY + row * (cardHeight + spacing);
+    ctx.font = '700 26px Montserrat';
+    ctx.fillText('AVG / RIDE', (W * 3) / 4, blockY + 36);
+    ctx.font = '900 92px Montserrat';
+    ctx.fillText(`$${stats.overview.averagePerRide.toFixed(2)}`, (W * 3) / 4, blockY + 80);
 
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-        roundRect(ctx, x, y, cardWidth, cardHeight, 24);
-        ctx.fill();
+    // Decorative stickers/bursts
+    drawStar(ctx, 130, 1180, 4, 56, 18, palette.primary, rng() * Math.PI);
+    drawStar(ctx, W - 110, 1190, 5, 44, 16, palette.accent, rng() * Math.PI);
+    drawStar(ctx, 90, 380, 6, 38, 14, palette.primary, rng() * Math.PI);
+    drawStar(ctx, W - 80, 1560, 4, 50, 18, palette.bg, rng() * Math.PI);
 
-        ctx.textAlign = 'center';
-        drawText(ctx, card.label.toUpperCase(), x + cardWidth / 2, y + 62, 26, 'normal');
-        drawText(ctx, card.value, x + cardWidth / 2, y + 145, 58, '900');
-    });
+    // Grain overlay
+    applyGrain(ctx, 6500);
 
     return canvas.toBuffer('image/png');
 };
 
-const generateRailImage = async (stats, insights) => {
-    const { canvas, ctx } = createSlide(['#f093fb', '#f5576c']);
+const generateRailImage = async (stats, insights, period) => {
+    const palette = pickPalette(period);
+    const rng = seededRng(hashSeed(period + 'rail'));
+    const canvas = createCanvas(CONFIG.width, CONFIG.height);
+    const ctx = canvas.getContext('2d');
+    const W = CONFIG.width, H = CONFIG.height;
 
-    await drawDecorations(ctx, [
-        // Large watermark behind content
-        { emoji: '🚇', x: 880, y: 370, size: 260, opacity: 0.07, rotation: 0.25 },
-        // Bottom sparkles
-        { emoji: '✨', x: 200,  y: 1868, size: 48, opacity: 0.25 },
-        { emoji: '✨', x: 540,  y: 1878, size: 55, opacity: 0.22 },
-        { emoji: '✨', x: 880,  y: 1865, size: 44, opacity: 0.24 },
-    ]);
+    fillBg(ctx, palette.bg);
+    drawBlob(ctx, -W * 0.15, H * 0.22, 460, palette.secondary, hashSeed(period + 'rail-b1'));
+    drawBlob(ctx, W * 1.1, H * 0.7, 400, palette.accent, hashSeed(period + 'rail-b2'));
 
-    await drawEmoji(ctx, '🚇', CONFIG.width / 2, 230, 80);
-    drawText(ctx, 'Rail Journey', CONFIG.width / 2, 360, 70, '900');
+    drawTag(ctx, 'RAIL JOURNEY', W / 2, 130, 38, '900', palette.primary, palette.bg, -0.03, 32);
 
-    const railInsight = insights.find(i => i.title === 'Favorite Line' || i.title === 'Your Home Station');
-    if (railInsight) {
-        drawText(ctx, railInsight.title, CONFIG.width / 2, 480, 38);
-        drawText(ctx, railInsight.value, CONFIG.width / 2, 600, 90, '900');
-        drawText(ctx, railInsight.detail, CONFIG.width / 2, 668, 34);
+    const home = stats.rail.stationVisits[0];
+    const homeName = home ? home.station.toUpperCase() : 'NO RIDES';
+    drawRotated(ctx, 'HOME STATION', W / 2, 240, -0.02, 30, '700', palette.ink);
+    drawHero(ctx, homeName, W / 2, 430, W * 0.94, 200, '900', palette.primary, -0.02);
+    drawHeroOutline(ctx, homeName, W / 2 - 8, 422, W * 0.94, 200, '900', palette.secondary, 5, -0.02);
+    if (home) {
+        drawRotated(ctx, rideLabel(home.count).toUpperCase(), W / 2, 560, 0.04, 32, '700', palette.ink);
     }
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    roundRect(ctx, 90, 760, 900, 160, 24);
-    ctx.fill();
+    // Hard color-block stats strip
+    const stripY = 640, stripH = 200;
+    ctx.fillStyle = palette.primary;
+    ctx.fillRect(0, stripY, W / 2, stripH);
+    ctx.fillStyle = palette.accent;
+    ctx.fillRect(W / 2, stripY, W / 2, stripH);
 
-    ctx.textAlign = 'left';
-    drawText(ctx, 'Total Rail Rides', 140, 820, 32, 'normal', 'left');
-    drawText(ctx, 'Unique Stations', 140, 885, 32, 'normal', 'left');
-    ctx.textAlign = 'right';
-    drawText(ctx, stats.rail.totalRides.toString(), 940, 820, 38, '900', 'right');
-    drawText(ctx, stats.overview.uniqueRailStations.toString(), 940, 885, 38, '900', 'right');
+    ctx.fillStyle = palette.bg;
+    ctx.font = '700 26px Montserrat';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('TOTAL RIDES', W / 4, stripY + 32);
+    ctx.font = '900 100px Montserrat';
+    ctx.fillText(stats.rail.totalRides.toString(), W / 4, stripY + 72);
 
-    drawText(ctx, 'Top Starting Stations', CONFIG.width / 2, 1020, 42, '700');
+    ctx.font = '700 26px Montserrat';
+    ctx.fillText('STATIONS', (W * 3) / 4, stripY + 32);
+    ctx.font = '900 100px Montserrat';
+    ctx.fillText(stats.overview.uniqueRailStations.toString(), (W * 3) / 4, stripY + 72);
 
-    const topStations = stats.rail.stationVisits.slice(0, 5);
-    const maxStationCount = topStations[0]?.count || 1;
+    drawSquiggle(ctx, 80, 900, 920, 12, 5, palette.secondary, 7);
+    drawTag(ctx, 'TOP STATIONS', W / 2, 970, 30, '900', palette.secondary, palette.bg, 0.03, 24);
 
-    topStations.forEach((station, i) => {
-        const y = 1080 + (i * 155);
-
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-        roundRect(ctx, 90, y, 900, 120, 16);
-        ctx.fill();
-
-        // Inline progress bar
-        const barFill = station.count / maxStationCount;
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-        roundRect(ctx, 90, y + 100, 900, 7, 3);
-        ctx.fill();
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
-        roundRect(ctx, 90, y + 100, 900 * barFill, 7, 3);
-        ctx.fill();
-
+    // Typographic stack: station names sized by rides
+    const top = stats.rail.stationVisits.slice(0, 5);
+    const maxCount = top[0]?.count || 1;
+    const colors = [palette.primary, palette.accent, palette.primary, palette.accent, palette.primary];
+    let yPos = 1080;
+    top.forEach((s, i) => {
+        const ratio = s.count / maxCount;
+        const baseSize = 50 + ratio * 50;
+        const angle = (rng() - 0.5) * 0.06;
+        // Auto-fit to width
+        const label = s.station.toUpperCase();
+        let fs = baseSize;
+        ctx.font = `900 ${fs}px Montserrat`;
+        const countText = `  ${s.count}`;
+        ctx.font = `700 ${Math.round(fs * 0.5)}px Montserrat`;
+        const countW = ctx.measureText(countText).width;
+        ctx.font = `900 ${fs}px Montserrat`;
+        while (ctx.measureText(label).width + countW > W - 120 && fs > 28) {
+            fs -= 4;
+            ctx.font = `900 ${fs}px Montserrat`;
+        }
+        ctx.save();
+        ctx.translate(60, yPos);
+        ctx.rotate(angle);
+        ctx.fillStyle = colors[i];
         ctx.textAlign = 'left';
-        drawText(ctx, `${i + 1}.`, 130, y + 72, 40, '900', 'left');
-        drawText(ctx, station.station, 195, y + 72, 38, 'normal', 'left');
-        ctx.textAlign = 'right';
-        drawText(ctx, rideLabel(station.count), 950, y + 72, 34, '700', 'right');
+        ctx.textBaseline = 'middle';
+        ctx.font = `900 ${fs}px Montserrat`;
+        ctx.fillText(label, 0, 0);
+        const labelW = ctx.measureText(label).width;
+        ctx.font = `700 ${Math.round(fs * 0.5)}px Montserrat`;
+        ctx.fillStyle = palette.ink;
+        ctx.fillText(`  ${s.count}`, labelW, 0);
+        ctx.restore();
+        yPos += fs + 30;
     });
 
+    drawStar(ctx, 90, 1010, 5, 36, 12, palette.accent, rng() * Math.PI);
+    drawStar(ctx, W - 90, 1820, 4, 40, 14, palette.primary, rng() * Math.PI);
+
+    applyGrain(ctx, 6500);
     return canvas.toBuffer('image/png');
 };
 
-const generateBusImage = async (stats, insights) => {
-    const { canvas, ctx } = createSlide(['#4facfe', '#00f2fe']);
+const generateBusImage = async (stats, insights, period) => {
+    const palette = pickPalette(period);
+    const rng = seededRng(hashSeed(period + 'bus'));
+    const canvas = createCanvas(CONFIG.width, CONFIG.height);
+    const ctx = canvas.getContext('2d');
+    const W = CONFIG.width, H = CONFIG.height;
 
-    await drawDecorations(ctx, [
-        // Large watermark behind content
-        { emoji: '🚌', x: 860, y: 380, size: 260, opacity: 0.07, rotation: -0.2 },
-        // Bottom sparkles
-        { emoji: '✨', x: 200,  y: 1868, size: 48, opacity: 0.25 },
-        { emoji: '✨', x: 540,  y: 1878, size: 55, opacity: 0.22 },
-        { emoji: '✨', x: 880,  y: 1865, size: 44, opacity: 0.24 },
-    ]);
+    fillBg(ctx, palette.bg);
+    drawBlob(ctx, -W * 0.15, H * 0.18, 380, palette.primary, hashSeed(period + 'bus-b1'));
+    drawBlob(ctx, W * 1.15, H * 0.32, 440, palette.secondary, hashSeed(period + 'bus-b2'));
 
-    await drawEmoji(ctx, '🚌', CONFIG.width / 2, 230, 80);
-    drawText(ctx, 'Bus Routes', CONFIG.width / 2, 360, 70, '900');
+    drawTag(ctx, 'BUS ROUTES', W / 2, 130, 38, '900', palette.accent, palette.bg, -0.03, 32);
 
-    const busInsight = insights.find(i => i.title === 'Go-To Bus');
-    if (busInsight) {
-        drawText(ctx, busInsight.title, CONFIG.width / 2, 480, 38);
-        drawText(ctx, busInsight.value, CONFIG.width / 2, 600, 90, '900');
-        drawText(ctx, busInsight.detail, CONFIG.width / 2, 668, 34);
+    const top = stats.bus.routeUsage[0];
+    const goToLabel = top ? `#${top.route}` : 'N/A';
+    drawRotated(ctx, 'GO-TO BUS', W / 2, 250, -0.02, 30, '700', palette.ink);
+    drawHero(ctx, goToLabel, W / 2, 540, W * 0.85, 520, '900', palette.primary, -0.04);
+    drawHeroOutline(ctx, goToLabel, W / 2 - 12, 530, W * 0.85, 520, '900', palette.secondary, 6, -0.04);
+    if (top) {
+        drawRotated(ctx, rideLabel(top.count).toUpperCase(), W / 2, 820, 0.04, 36, '700', palette.ink);
     }
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    roundRect(ctx, 90, 760, 900, 160, 24);
-    ctx.fill();
+    drawSquiggle(ctx, 80, 920, 920, 12, 5, palette.accent, 7);
+    drawTag(ctx, 'ALSO RODE', W / 2, 990, 30, '900', palette.accent, palette.bg, 0.03, 24);
 
-    ctx.textAlign = 'left';
-    drawText(ctx, 'Total Bus Rides', 140, 820, 32, 'normal', 'left');
-    drawText(ctx, 'Unique Routes', 140, 885, 32, 'normal', 'left');
-    ctx.textAlign = 'right';
-    drawText(ctx, stats.bus.totalRides.toString(), 940, 820, 38, '900', 'right');
-    drawText(ctx, stats.overview.uniqueBusRoutes.toString(), 940, 885, 38, '900', 'right');
+    // Scattered route stickers (circles with route number)
+    const others = stats.bus.routeUsage.slice(1, 7);
+    if (others.length > 0) {
+        const cols = others.length <= 2 ? 2 : 3;
+        const rows = Math.ceil(others.length / cols);
+        const cellW = W / cols;
+        const cellH = 600 / rows;
+        const startY = 1100;
+        // Skip palette.accent — often white and washes out on the bg
+        const colors = [palette.primary, palette.secondary];
+        const maxOtherCount = others[0].count;
 
-    drawText(ctx, 'Top Routes', CONFIG.width / 2, 1020, 42, '700');
+        others.forEach((r, i) => {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const cx = (col + 0.5) * cellW + (rng() - 0.5) * 50;
+            const cy = startY + (row + 0.5) * cellH + (rng() - 0.5) * 30;
+            const sizeScale = 0.7 + (r.count / maxOtherCount) * 0.45;
+            const size = Math.min(cellW * 0.78, cellH * 0.92) * sizeScale;
+            const angle = (rng() - 0.5) * 0.4;
+            const c = colors[i % colors.length];
 
-    const topRoutes = stats.bus.routeUsage.slice(0, 5);
-    const maxRouteCount = topRoutes[0]?.count || 1;
-
-    topRoutes.forEach((route, i) => {
-        const y = 1080 + (i * 155);
-
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-        roundRect(ctx, 90, y, 900, 120, 16);
-        ctx.fill();
-
-        // Inline progress bar
-        const barFill = route.count / maxRouteCount;
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-        roundRect(ctx, 90, y + 100, 900, 7, 3);
-        ctx.fill();
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
-        roundRect(ctx, 90, y + 100, 900 * barFill, 7, 3);
-        ctx.fill();
-
-        ctx.textAlign = 'left';
-        drawText(ctx, `${i + 1}.`, 130, y + 72, 40, '900', 'left');
-        drawText(ctx, `Route ${route.route}`, 195, y + 72, 38, 'normal', 'left');
-        ctx.textAlign = 'right';
-        drawText(ctx, rideLabel(route.count), 950, y + 72, 34, '700', 'right');
-    });
-
-    return canvas.toBuffer('image/png');
-};
-
-const generateTimeOfDayImage = async (stats) => {
-    const { canvas, ctx } = createSlide(['#a8edea', '#fed6e3']);
-
-    await drawDecorations(ctx, [
-        // Left margin alongside the chart
-        { emoji: '⭐', x: 90,  y: 980,  size: 50, opacity: 0.30, rotation:  0.2  },
-        { emoji: '✨', x: 85,  y: 1220, size: 55, opacity: 0.28, rotation: -0.2  },
-        { emoji: '⭐', x: 88,  y: 1480, size: 48, opacity: 0.26                  },
-        // Right margin
-        { emoji: '✨', x: 990, y: 1060, size: 52, opacity: 0.29, rotation:  0.3  },
-        { emoji: '⭐', x: 992, y: 1320, size: 50, opacity: 0.27, rotation: -0.2  },
-        { emoji: '✨', x: 988, y: 1580, size: 48, opacity: 0.25                  },
-    ]);
-
-    await drawEmoji(ctx, '⏰', CONFIG.width / 2, 150, 80);
-    drawText(ctx, 'When You Ride', CONFIG.width / 2, 280, 70, '900');
-
-    const peakHour = Object.entries(stats.temporal.byHour).sort((a, b) => b[1] - a[1])[0];
-    if (peakHour) {
-        const hour = parseInt(peakHour[0]);
-        const timeLabel = hour === 0 ? '12AM' : hour < 12 ? `${hour}AM` : hour === 12 ? '12PM' : `${hour - 12}PM`;
-
-        drawText(ctx, 'Most Active Hour', CONFIG.width / 2, 390, 38);
-        drawText(ctx, timeLabel, CONFIG.width / 2, 560, 160, '900');
-        drawText(ctx, rideLabel(peakHour[1]), CONFIG.width / 2, 640, 34);
-    }
-
-    drawText(ctx, '24-Hour Activity', CONFIG.width / 2, 740, 44, '700');
-
-    const maxHourlyRides = Math.max(...Object.values(stats.temporal.byHour));
-    const barWidth = 35;
-    const barSpacing = 5;
-    const baseY = 1840;
-    const chartTopY = 800;
-    const maxBarHeight = baseY - chartTopY;
-    const startX = 65;
-
-    for (let hour = 0; hour < 24; hour++) {
-        const rides = stats.temporal.byHour[hour] || 0;
-        const x = startX + (hour * (barWidth + barSpacing));
-
-        // Ghost bar for all hours (gives the chart visual structure)
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-        roundRect(ctx, x, chartTopY, barWidth, maxBarHeight, 5);
-        ctx.fill();
-
-        if (rides > 0) {
-            const barHeight = Math.max((rides / maxHourlyRides) * maxBarHeight, 10);
-            const intensity = rides / maxHourlyRides;
-
-            // Teal (low) to rose (high) — matches the slide gradient palette
-            const r = Math.floor(100 + intensity * 155);
-            const g = Math.floor(200 - intensity * 80);
-            const b = Math.floor(210 - intensity * 120);
-            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.85)`;
-
-            roundRect(ctx, x, baseY - barHeight, barWidth, barHeight, 5);
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(angle);
+            ctx.fillStyle = c;
+            ctx.beginPath();
+            ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
             ctx.fill();
-        }
-
-        if (hour % 3 === 0) {
-            const timeLabel = hour === 0 ? '12A' : hour < 12 ? `${hour}A` : hour === 12 ? '12P' : `${hour - 12}P`;
-            ctx.fillStyle = 'rgba(0,0,0,0.35)';
-            ctx.font = '20px Montserrat';
+            ctx.fillStyle = palette.bg;
+            ctx.font = `900 ${Math.round(size * 0.34)}px Montserrat`;
             ctx.textAlign = 'center';
-            ctx.fillText(timeLabel, x + barWidth / 2, baseY + 30);
-        }
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`#${r.route}`, 0, -size * 0.07);
+            ctx.font = `700 ${Math.round(size * 0.14)}px Montserrat`;
+            ctx.fillText(rideLabel(r.count).toUpperCase(), 0, size * 0.22);
+            ctx.restore();
+        });
     }
 
+    // Bottom stats hard-block strip
+    const stripY = 1700, stripH = 200;
+    ctx.fillStyle = palette.primary;
+    ctx.fillRect(0, stripY, W / 2, stripH);
+    ctx.fillStyle = palette.accent;
+    ctx.fillRect(W / 2, stripY, W / 2, stripH);
+
+    ctx.fillStyle = palette.bg;
+    ctx.font = '700 24px Montserrat';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('TOTAL RIDES', W / 4, stripY + 30);
+    ctx.font = '900 92px Montserrat';
+    ctx.fillText(stats.bus.totalRides.toString(), W / 4, stripY + 70);
+
+    ctx.font = '700 24px Montserrat';
+    ctx.fillText('UNIQUE', (W * 3) / 4, stripY + 30);
+    ctx.font = '900 92px Montserrat';
+    ctx.fillText(stats.overview.uniqueBusRoutes.toString(), (W * 3) / 4, stripY + 70);
+
+    applyGrain(ctx, 6500);
     return canvas.toBuffer('image/png');
 };
 
-const generateDayOfWeekImage = async (stats) => {
-    const { canvas, ctx } = createSlide(['#ff9a9e', '#fecfef']);
+const generateTimeOfDayImage = async (stats, period) => {
+    const palette = pickPalette(period);
+    const canvas = createCanvas(CONFIG.width, CONFIG.height);
+    const ctx = canvas.getContext('2d');
+    const W = CONFIG.width, H = CONFIG.height;
 
-    await drawDecorations(ctx, [
-        // Side margins alongside the bar chart
-        { emoji: '✨', x: 48,   y: 1200, size: 42, opacity: 0.16, rotation: -0.2  },
-        { emoji: '⭐', x: 44,   y: 1450, size: 38, opacity: 0.14                  },
-        { emoji: '✨', x: 1038, y: 1300, size: 40, opacity: 0.15, rotation:  0.25 },
-        { emoji: '⭐', x: 1035, y: 1560, size: 36, opacity: 0.13, rotation: -0.1  },
-        // Bottom
-        { emoji: '🎉', x: 200,  y: 1868, size: 52, opacity: 0.15, rotation: -0.3  },
-        { emoji: '✨', x: 540,  y: 1875, size: 50, opacity: 0.18                  },
-        { emoji: '🎉', x: 880,  y: 1870, size: 50, opacity: 0.14, rotation:  0.25 },
-    ]);
+    fillBg(ctx, palette.bg);
+    drawBlob(ctx, W * 1.05, -120, 380, palette.accent, hashSeed(period + 'time-b1'));
+    drawBlob(ctx, -120, H * 0.55, 360, palette.secondary, hashSeed(period + 'time-b2'));
 
-    await drawEmoji(ctx, '📅', CONFIG.width / 2, 230, 80);
-    drawText(ctx, 'Your Week', CONFIG.width / 2, 360, 70, '900');
+    drawTag(ctx, 'WHEN YOU RIDE', W / 2, 130, 38, '900', palette.primary, palette.bg, -0.03, 32);
 
-    const busiestDay = stats.overview.busiestDay;
-    if (busiestDay) {
-        drawText(ctx, 'Busiest Day', CONFIG.width / 2, 480, 38);
-        drawText(ctx, busiestDay[0], CONFIG.width / 2, 640, 110, '900');
-        drawText(ctx, rideLabel(busiestDay[1]), CONFIG.width / 2, 720, 34);
+    const peak = Object.entries(stats.temporal.byHour).sort((a, b) => b[1] - a[1])[0];
+    const hour = peak ? parseInt(peak[0]) : 0;
+    const timeLabel = hour === 0 ? '12AM' : hour < 12 ? `${hour}AM` : hour === 12 ? '12PM' : `${hour - 12}PM`;
+
+    drawRotated(ctx, 'PEAK HOUR', W / 2, 250, -0.02, 30, '700', palette.ink);
+    drawHero(ctx, timeLabel, W / 2, 540, W * 0.92, 480, '900', palette.primary, -0.03);
+    drawHeroOutline(ctx, timeLabel, W / 2 - 12, 530, W * 0.92, 480, '900', palette.secondary, 6, -0.03);
+    if (peak) {
+        drawRotated(ctx, rideLabel(peak[1]).toUpperCase(), W / 2, 820, 0.04, 36, '700', palette.ink);
     }
 
+    drawSquiggle(ctx, 80, 920, 920, 12, 5, palette.accent, 7);
+    drawTag(ctx, '24 HOUR ACTIVITY', W / 2, 990, 28, '900', palette.accent, palette.bg, 0.03, 24);
+
+    // Sculptural 24-bar chart — peak hour leads in primary
+    const maxRides = Math.max(...Object.values(stats.temporal.byHour), 1);
+    const peakHour = peak ? parseInt(peak[0]) : -1;
+    const chartTop = 1100, chartBot = 1810;
+    const chartH = chartBot - chartTop;
+    const barW = 36, gap = 6;
+    const totalW = 24 * barW + 23 * gap;
+    const startX = (W - totalW) / 2;
+
+    for (let h = 0; h < 24; h++) {
+        const rides = stats.temporal.byHour[h] || 0;
+        const x = startX + h * (barW + gap);
+        // Ghost bar
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.fillRect(x, chartTop, barW, chartH);
+        if (rides > 0) {
+            const bh = Math.max((rides / maxRides) * chartH, 14);
+            ctx.fillStyle = h === peakHour ? palette.primary : palette.secondary;
+            ctx.fillRect(x, chartBot - bh, barW, bh);
+        }
+        if (h % 3 === 0) {
+            const lbl = h === 0 ? '12A' : h < 12 ? `${h}A` : h === 12 ? '12P' : `${h - 12}P`;
+            ctx.fillStyle = palette.ink;
+            ctx.font = '700 18px Montserrat';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillText(lbl, x + barW / 2, chartBot + 16);
+        }
+    }
+
+    applyGrain(ctx, 6500);
+    return canvas.toBuffer('image/png');
+};
+
+const generateDayOfWeekImage = async (stats, period) => {
+    const palette = pickPalette(period);
+    const canvas = createCanvas(CONFIG.width, CONFIG.height);
+    const ctx = canvas.getContext('2d');
+    const W = CONFIG.width, H = CONFIG.height;
+
+    fillBg(ctx, palette.bg);
+    drawBlob(ctx, -W * 0.1, H * 0.15, 420, palette.secondary, hashSeed(period + 'dow-b1'));
+    drawBlob(ctx, W * 1.05, H * 0.85, 380, palette.accent, hashSeed(period + 'dow-b2'));
+
+    drawTag(ctx, 'YOUR WEEK', W / 2, 130, 38, '900', palette.primary, palette.bg, -0.03, 32);
+
+    const busiest = stats.overview.busiestDay;
+    const busiestName = busiest ? busiest[0].toUpperCase() : 'NONE';
+    drawRotated(ctx, 'BUSIEST DAY', W / 2, 240, -0.02, 30, '700', palette.ink);
+    drawHero(ctx, busiestName, W / 2, 430, W * 0.94, 220, '900', palette.primary, -0.025);
+    drawHeroOutline(ctx, busiestName, W / 2 - 8, 422, W * 0.94, 220, '900', palette.secondary, 5, -0.025);
+    if (busiest) {
+        drawRotated(ctx, rideLabel(busiest[1]).toUpperCase(), W / 2, 580, 0.04, 32, '700', palette.ink);
+    }
+
+    // Hard color split: weekday vs weekend
     const daysOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    const dayData = daysOrder.map(day => ({
-        day,
-        count: stats.temporal.byDayOfWeek[day] || 0
-    }));
+    const dayData = daysOrder.map(d => ({ day: d, count: stats.temporal.byDayOfWeek[d] || 0 }));
+    const weekdayRides = dayData.slice(0, 5).reduce((s, d) => s + d.count, 0);
+    const weekendRides = dayData.slice(5).reduce((s, d) => s + d.count, 0);
 
-    const weekdayRides = dayData.slice(0, 5).reduce((sum, d) => sum + d.count, 0);
-    const weekendRides = dayData.slice(5, 7).reduce((sum, d) => sum + d.count, 0);
+    const splitY = 660, splitH = 200;
+    const totalRides = Math.max(weekdayRides + weekendRides, 1);
+    const wdFrac = Math.max(0.18, Math.min(0.82, weekdayRides / totalRides));
+    ctx.fillStyle = palette.primary;
+    ctx.fillRect(0, splitY, W * wdFrac, splitH);
+    ctx.fillStyle = palette.accent;
+    ctx.fillRect(W * wdFrac, splitY, W * (1 - wdFrac), splitH);
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
-    roundRect(ctx, 90, 800, 900, 160, 24);
-    ctx.fill();
-
+    ctx.fillStyle = palette.bg;
+    ctx.font = '700 24px Montserrat';
     ctx.textAlign = 'left';
-    drawText(ctx, 'Weekday Rides', 140, 860, 32, 'normal', 'left');
-    drawText(ctx, 'Weekend Rides', 140, 922, 32, 'normal', 'left');
+    ctx.textBaseline = 'top';
+    ctx.fillText('WEEKDAY', 30, splitY + 28);
+    ctx.font = '900 100px Montserrat';
+    ctx.fillText(weekdayRides.toString(), 24, splitY + 68);
+
+    ctx.font = '700 24px Montserrat';
     ctx.textAlign = 'right';
-    drawText(ctx, weekdayRides.toString(), 940, 860, 38, '900', 'right');
-    drawText(ctx, weekendRides.toString(), 940, 922, 38, '900', 'right');
+    ctx.fillText('WEEKEND', W - 30, splitY + 28);
+    ctx.font = '900 100px Montserrat';
+    ctx.fillText(weekendRides.toString(), W - 24, splitY + 68);
 
-    drawText(ctx, 'Daily Activity', CONFIG.width / 2, 1060, 42, '700');
+    drawSquiggle(ctx, 80, 920, 920, 12, 5, palette.secondary, 7);
+    drawTag(ctx, 'DAILY BREAKDOWN', W / 2, 990, 28, '900', palette.secondary, palette.bg, 0.03, 24);
 
-    const maxDayRides = Math.max(...dayData.map(d => d.count));
-    const barMaxWidth = 680;
-    const barHeight = 72;
-    const startY = 1110;
-    const rowSpacing = 108;
+    // 7-day horizontal bars — busiest in primary, others in muted secondary
+    const maxDay = Math.max(...dayData.map(d => d.count), 1);
+    const rowH = 92, rowGap = 8;
+    const startY = 1080;
+    const labelX = 60, barStart = 200;
+    const barMaxW = W - barStart - 100;
 
     dayData.forEach((d, i) => {
-        const y = startY + (i * rowSpacing);
-        const barWidth = maxDayRides > 0 ? (d.count / maxDayRides) * barMaxWidth : 0;
-
-        // Background track
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
-        roundRect(ctx, 240, y, barMaxWidth, barHeight, 10);
-        ctx.fill();
-
-        // Bar — white opacity scaled by intensity so the busiest day is brightest
-        const intensity = maxDayRides > 0 ? d.count / maxDayRides : 0;
-        ctx.fillStyle = `rgba(255, 255, 255, ${0.25 + intensity * 0.5})`;
-        if (barWidth > 0) {
-            roundRect(ctx, 240, y, barWidth, barHeight, 10);
-            ctx.fill();
-        }
-
-        ctx.fillStyle = 'white';
+        const y = startY + i * (rowH + rowGap);
+        ctx.fillStyle = palette.ink;
+        ctx.font = '900 38px Montserrat';
         ctx.textAlign = 'left';
-        ctx.font = 'bold 30px Montserrat';
-        ctx.fillText(d.day.substring(0, 3), 90, y + 47);
+        ctx.textBaseline = 'middle';
+        ctx.fillText(d.day.substring(0, 3).toUpperCase(), labelX, y + rowH / 2);
 
-        ctx.font = 'bold 28px Montserrat';
-        if (barWidth > 90) {
-            ctx.textAlign = 'right';
-            ctx.fillText(d.count.toString(), 228 + barWidth, y + 47);
-        } else {
-            ctx.textAlign = 'left';
-            ctx.fillText(d.count.toString(), 248 + barWidth, y + 47);
-        }
+        const bw = (d.count / maxDay) * barMaxW;
+        const isMax = d.count === maxDay && d.count > 0;
+        ctx.fillStyle = isMax ? palette.primary : palette.secondary;
+        ctx.fillRect(barStart, y + rowH * 0.22, Math.max(bw, 8), rowH * 0.56);
+
+        ctx.fillStyle = palette.ink;
+        ctx.font = '700 32px Montserrat';
+        ctx.textAlign = 'left';
+        ctx.fillText(d.count.toString(), barStart + Math.max(bw, 8) + 18, y + rowH / 2);
     });
 
+    applyGrain(ctx, 6500);
     return canvas.toBuffer('image/png');
 };
 
-const generatePersonalityImage = async (stats, insights) => {
-    const { canvas, ctx } = createSlide(['#fa709a', '#fee140']);
+const generatePersonalityImage = async (_stats, insights, period) => {
+    const palette = pickPalette(period);
+    const rng = seededRng(hashSeed(period + 'persona'));
+    const canvas = createCanvas(CONFIG.width, CONFIG.height);
+    const ctx = canvas.getContext('2d');
+    const W = CONFIG.width, H = CONFIG.height;
 
-    await drawDecorations(ctx, [
-        // Side margins alongside the insight cards
-        { emoji: '✨', x: 48,   y: 550,  size: 40, opacity: 0.18, rotation: -0.2  },
-        { emoji: '⭐', x: 44,   y: 860,  size: 38, opacity: 0.15                  },
-        { emoji: '✨', x: 46,   y: 1160, size: 42, opacity: 0.16, rotation:  0.2  },
-        { emoji: '⭐', x: 1038, y: 660,  size: 38, opacity: 0.15, rotation: -0.15 },
-        { emoji: '✨', x: 1035, y: 970,  size: 40, opacity: 0.17                  },
-        { emoji: '⭐', x: 1037, y: 1270, size: 36, opacity: 0.14, rotation:  0.2  },
-        // Between last card and footer
-        { emoji: '🎉', x: 200,  y: 1730, size: 55, opacity: 0.15, rotation: -0.3  },
-        { emoji: '✨', x: 540,  y: 1738, size: 58, opacity: 0.18                  },
-        { emoji: '🎉', x: 880,  y: 1732, size: 52, opacity: 0.14, rotation:  0.3  },
-    ]);
+    fillBg(ctx, palette.bg);
+    drawBlob(ctx, W * 1.0, H * 0.18, 480, palette.secondary, hashSeed(period + 'p-b1'));
+    drawBlob(ctx, -W * 0.12, H * 0.85, 440, palette.accent, hashSeed(period + 'p-b2'));
 
-    drawText(ctx, 'Your Transit', CONFIG.width / 2, 200, 70, '900');
-    drawText(ctx, 'Personality', CONFIG.width / 2, 290, 70, '900');
+    drawTag(ctx, 'YOUR TRANSIT', W / 2, 130, 38, '900', palette.primary, palette.bg, -0.03, 32);
 
-    // Show all 6 insights
-    insights.forEach((insight, i) => {
-        const y = 410 + (i * 218);
+    const personality = insights.find(i => i.title === 'Your Transit Style');
+    const personaLabel = personality ? personality.value.toUpperCase() : 'TRANSIT RIDER';
+    drawRotated(ctx, 'PERSONALITY', W / 2, 240, -0.02, 32, '700', palette.ink);
+    drawHero(ctx, personaLabel, W / 2, 470, W * 0.94, 220, '900', palette.primary, -0.025);
+    drawHeroOutline(ctx, personaLabel, W / 2 - 10, 462, W * 0.94, 220, '900', palette.secondary, 5, -0.025);
+    if (personality) {
+        drawRotated(ctx, personality.detail.toUpperCase(), W / 2, 600, 0.04, 30, '700', palette.ink);
+    }
 
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
-        roundRect(ctx, 90, y, 900, 182, 20);
+    // Other insights as scattered bold tags. Odd count → last tag spans full width.
+    const others = insights.filter(i => i.title !== 'Your Transit Style');
+    const cols = 2;
+    const lastSpansFull = others.length % 2 === 1;
+    const gridCount = lastSpansFull ? others.length - 1 : others.length;
+    const gridRows = gridCount / cols;
+    const totalRows = gridRows + (lastSpansFull ? 1 : 0);
+    const tagAreaTop = 700;
+    const tagAreaBot = 1750;
+    const cellW = (W - 80) / cols;
+    const cellH = (tagAreaBot - tagAreaTop) / Math.max(totalRows, 1);
+    const colors = [palette.primary, palette.accent];
+
+    others.forEach((insight, i) => {
+        const isLast = lastSpansFull && i === others.length - 1;
+        let cx, cy, tagW, tagH;
+        if (isLast) {
+            cx = W / 2 + (rng() - 0.5) * 10;
+            cy = tagAreaTop + (gridRows + 0.5) * cellH + (rng() - 0.5) * 10;
+            tagW = W - 80;
+            tagH = cellH * 0.78;
+        } else {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            cx = 40 + (col + 0.5) * cellW + (rng() - 0.5) * 26;
+            cy = tagAreaTop + (row + 0.5) * cellH + (rng() - 0.5) * 22;
+            tagW = cellW - 24;
+            tagH = cellH * 0.78;
+        }
+        const angle = (rng() - 0.5) * 0.16;
+        const bgC = colors[i % colors.length];
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(angle);
+        ctx.fillStyle = bgC;
+        roundRect(ctx, -tagW / 2, -tagH / 2, tagW, tagH, 28);
         ctx.fill();
 
+        ctx.fillStyle = palette.bg;
+        ctx.font = '700 22px Montserrat';
         ctx.textAlign = 'center';
-        drawText(ctx, insight.title.toUpperCase(), CONFIG.width / 2, y + 48, 26, 'normal');
-        drawText(ctx, insight.value, CONFIG.width / 2, y + 118, 54, '900');
-        drawText(ctx, insight.detail, CONFIG.width / 2, y + 162, 28);
+        ctx.textBaseline = 'middle';
+        ctx.fillText(insight.title.toUpperCase(), 0, -tagH / 2 + 36);
+
+        // Auto-fit value
+        let vfs = 60;
+        const valueText = insight.value.toUpperCase();
+        ctx.font = `900 ${vfs}px Montserrat`;
+        while (ctx.measureText(valueText).width > tagW - 36 && vfs > 24) {
+            vfs -= 4;
+            ctx.font = `900 ${vfs}px Montserrat`;
+        }
+        ctx.fillText(valueText, 0, 4);
+
+        ctx.font = '700 22px Montserrat';
+        ctx.fillText(insight.detail, 0, tagH / 2 - 32);
+        ctx.restore();
     });
 
-    // Footer
-    drawText(ctx, 'Thanks for riding!', CONFIG.width / 2, 1790, 46, '900');
-    await drawEmoji(ctx, '🚇', CONFIG.width / 2 - 55, 1865, 52);
-    await drawEmoji(ctx, '🚌', CONFIG.width / 2 + 55, 1865, 52);
+    drawStar(ctx, 90, 720, 5, 38, 14, palette.accent, rng() * Math.PI);
+    drawStar(ctx, W - 80, 1740, 4, 42, 16, palette.primary, rng() * Math.PI);
 
+    applyGrain(ctx, 6500);
     return canvas.toBuffer('image/png');
 };
 
@@ -742,11 +1027,11 @@ const generateWrapped = async (year, month = null, week = null) => {
         
         const images = [
             { name: '1-overview', fn: () => generateOverviewImage(stats, period) },
-            { name: '2-rail', fn: () => generateRailImage(stats, insights) },
-            { name: '3-bus', fn: () => generateBusImage(stats, insights) },
-            { name: '4-time-of-day', fn: () => generateTimeOfDayImage(stats) },
-            { name: '5-day-of-week', fn: () => generateDayOfWeekImage(stats) },
-            { name: '6-personality', fn: () => generatePersonalityImage(stats, insights) }
+            { name: '2-rail', fn: () => generateRailImage(stats, insights, period) },
+            { name: '3-bus', fn: () => generateBusImage(stats, insights, period) },
+            { name: '4-time-of-day', fn: () => generateTimeOfDayImage(stats, period) },
+            { name: '5-day-of-week', fn: () => generateDayOfWeekImage(stats, period) },
+            { name: '6-personality', fn: () => generatePersonalityImage(stats, insights, period) }
         ];
         
         const filePaths = [];
