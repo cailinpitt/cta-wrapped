@@ -46,7 +46,7 @@ Station names from the Ventra API are normalized before display:
 - Unidentifiable bus entries (Deadhead, route 0) excluded from route rankings but still counted toward total ride stats
 
 #### Fonts
-The visuals use [Montserrat](https://fonts.google.com/specimen/Montserrat). Font files (Regular, SemiBold, Bold, ExtraBold, Black) must be present in a `fonts/` directory. Download from Google Fonts and place the static TTF files there.
+The visuals use [Montserrat](https://fonts.google.com/specimen/Montserrat). Font files (Bold and Black) must be present in a `fonts/` directory. Download from Google Fonts and place the static TTF files there.
 
 ## Requirements
 - Node.js 18+ (for built-in `fetch` API)

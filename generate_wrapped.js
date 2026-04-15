@@ -1,12 +1,8 @@
 const fs = require('fs').promises;
-const { createCanvas, loadImage, registerFont } = require('canvas');
+const { createCanvas, registerFont } = require('canvas');
 
-registerFont('./fonts/Montserrat-Regular.ttf',   { family: 'Montserrat', weight: '400' });
-registerFont('./fonts/Montserrat-SemiBold.ttf',  { family: 'Montserrat', weight: '600' });
-registerFont('./fonts/Montserrat-Bold.ttf',      { family: 'Montserrat', weight: '700' });
-registerFont('./fonts/Montserrat-ExtraBold.ttf', { family: 'Montserrat', weight: '800' });
-registerFont('./fonts/Montserrat-Black.ttf',     { family: 'Montserrat', weight: '900' });
-const twemoji = require('twemoji');
+registerFont('./fonts/Montserrat-Bold.ttf',  { family: 'Montserrat', weight: '700' });
+registerFont('./fonts/Montserrat-Black.ttf', { family: 'Montserrat', weight: '900' });
 
 const CONFIG = {
     width: 1080,
@@ -228,60 +224,6 @@ const filterByPeriod = (transactions, year, month = null, week = null) => {
             return txYear === year;
         }
     });
-};
-
-const createGradient = (ctx, colors) => {
-    const gradient = ctx.createLinearGradient(0, 0, 0, CONFIG.height);
-    gradient.addColorStop(0, colors[0]);
-    gradient.addColorStop(1, colors[1]);
-    return gradient;
-};
-
-const createSlide = (colors) => {
-    const canvas = createCanvas(CONFIG.width, CONFIG.height);
-    const ctx = canvas.getContext('2d');
-    
-    ctx.fillStyle = createGradient(ctx, colors);
-    ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
-    
-    return { canvas, ctx };
-};
-
-const drawText = (ctx, text, x, y, fontSize, fontWeight = 'normal', align = 'center') => {
-    ctx.font = `${fontWeight} ${fontSize}px Montserrat`;
-    ctx.fillStyle = 'white';
-    ctx.textAlign = align;
-    ctx.fillText(text, x, y);
-};
-
-const drawEmoji = async (ctx, emoji, x, y, size) => {
-    try {
-        const codePoint = twemoji.convert.toCodePoint(emoji);
-        const emojiUrl = `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/${codePoint}.png`;
-        
-        const image = await loadImage(emojiUrl);
-        ctx.drawImage(image, x - size/2, y - size/2, size, size);
-    } catch (error) {
-        console.log(`Could not load emoji ${emoji}:`, error.message);
-        ctx.font = `${size}px Arial`;
-        ctx.fillStyle = 'white';
-        ctx.textAlign = 'center';
-        ctx.fillText(emoji, x, y);
-    }
-};
-
-const drawDecorations = async (ctx, items) => {
-    for (const item of items) {
-        ctx.save();
-        ctx.globalAlpha = item.opacity;
-        if (item.rotation) {
-            ctx.translate(item.x, item.y);
-            ctx.rotate(item.rotation);
-            ctx.translate(-item.x, -item.y);
-        }
-        await drawEmoji(ctx, item.emoji, item.x, item.y, item.size);
-        ctx.restore();
-    }
 };
 
 const roundRect = (ctx, x, y, width, height, radius) => {
