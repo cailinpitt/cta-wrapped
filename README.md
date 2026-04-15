@@ -17,17 +17,24 @@ This script analyzes Ventra usage data locally and generates 6 shareable **1080Ã
 
 | # | Image | Contents |
 |---|-------|----------|
-| 1 | `overview` | Total rides, total spent, avg per ride, rail vs bus split bar |
-| 2 | `rail` | Top station, favorite line, top 5 stations ranked with relative bars |
-| 3 | `bus` | Go-to bus route, top 5 routes ranked with relative bars |
-| 4 | `time-of-day` | Peak hour, 24-bar hourly activity chart |
-| 5 | `day-of-week` | Busiest day, weekday vs weekend split, daily bar chart |
-| 6 | `personality` | All 6 insights: home station, favorite line, go-to bus, peak hour, most active day, transit style |
+| 1 | `overview` | Hero ride count, hard-block rail vs bus split, total spent and avg per ride |
+| 2 | `rail` | Home station hero, total rides + unique stations, top 5 stations as a typographic stack sized by ride count |
+| 3 | `bus` | Go-to bus route as oversized hero, other routes as scattered colored stickers, total + unique routes |
+| 4 | `time-of-day` | Peak hour hero, sculptural 24-bar hourly chart with peak hour highlighted |
+| 5 | `day-of-week` | Busiest day hero, weekday vs weekend hard split, daily bar chart with busiest day highlighted |
+| 6 | `personality` | Transit style hero, supporting insights as scattered sticker tags (home station, favorite line, go-to bus, peak hour, most active day) |
+
+Each image uses a deterministic palette picked from the period (so March 2026 always renders in the same colors, but April 2026 may render in a different palette).
 
 <p float="middle">
-  <img src="example/2026-01-1-overview.png" width="30%" />
-  <img src="example/2026-01-2-rail.png" width="30%" /> 
-  <img src="example/2026-01-3-bus.png" width="30%" />
+  <img src="example/2026-03-1-overview.png" width="32%" />
+  <img src="example/2026-03-2-rail.png" width="32%" />
+  <img src="example/2026-03-3-bus.png" width="32%" />
+</p>
+<p float="middle">
+  <img src="example/2026-03-4-time-of-day.png" width="32%" />
+  <img src="example/2026-03-5-day-of-week.png" width="32%" />
+  <img src="example/2026-03-6-personality.png" width="32%" />
 </p>
 
 #### Data Cleaning
