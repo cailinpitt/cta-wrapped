@@ -1,6 +1,8 @@
 const fs = require('fs').promises;
-const { ventraKeys, email } = require('./keys.js');
-const nodemailer = require('nodemailer');
+const path = require('path');
+const { ventraKeys } = require('./keys.js');
+const { sendMail } = require('./mailer.js');
+const { generateWrapped, emailWrapped, getWeekNumber } = require('./generate_wrapped.js');
 
 const CONFIG = {
     maxRetries: 3,
@@ -303,59 +305,74 @@ const mergeTransactions = (existingData, newData) => {
     };
 };
 
+/** Send last month's wrapped on the first run of a new month (any day in week 1) */
+const maybeSendMonthlyWrapped = async () => {
+    const today = new Date();
+    if (today.getDate() > 7) return;
+
+    const prev = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    try {
+        const result = await generateWrapped(prev.getFullYear(), prev.getMonth() + 1);
+        await emailWrapped(result);
+    } catch (err) {
+        console.error('Failed to generate monthly wrapped:', err.message);
+    }
+};
+
+/** Generate the previous week's wrapped images for attachment */
+const buildWeeklyAttachments = async () => {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const year = yesterday.getFullYear();
+    const week = getWeekNumber(yesterday);
+    try {
+        const result = await generateWrapped(year, null, week);
+        if (!result) return { attachments: [], period: null };
+        return {
+            attachments: result.filePaths.map(p => ({ filename: path.basename(p), path: p })),
+            period: result.period
+        };
+    } catch (err) {
+        console.error('Failed to generate weekly wrapped:', err.message);
+        return { attachments: [], period: null };
+    }
+};
+
 /** Send email notification */
 const sendEmail = async (stats, error = null) => {
-    const emailConfig = email;
-    
-    if (!emailConfig) {
-        console.log('No email configuration found, skipping notification');
-        return;
-    }
-
-    const transporter = nodemailer.createTransport({
-        service: emailConfig.service,
-        auth: {
-            user: emailConfig.user,
-            pass: emailConfig.password
-        }
-    });
-
-    let subject, text;
+    let subject, text, attachments = [];
 
     if (error) {
         subject = '❌ Ventra Scraper Error';
         text = `Ventra scraper encountered an error:\n\n${error}\n\nTime: ${new Date().toISOString()}`;
     } else {
-        subject = stats.addedCount > 0 
+        const { attachments: weeklyAttachments, period } = await buildWeeklyAttachments();
+        attachments = weeklyAttachments;
+
+        subject = stats.addedCount > 0
             ? `✅ Ventra Scraper: ${stats.addedCount} New Transaction${stats.addedCount !== 1 ? 's' : ''}`
             : '✅ Ventra Scraper: No New Transactions';
 
         let transactionDetails = '';
         if (stats.newTransactions.length > 0) {
-            transactionDetails = '\n\nNew Transactions:\n' + stats.newTransactions.map(t => 
+            transactionDetails = '\n\nNew Transactions:\n' + stats.newTransactions.map(t =>
                 `  • ${t.formattedDate} - ${t.type} - ${t.locationRoute} [${t.transactionType}]`
             ).join('\n');
         }
+
+        const wrappedNote = period
+            ? `\n\nWeekly wrapped attached: ${period}`
+            : '\n\nNo wrapped generated (no transactions for the past week)';
 
         text = `Ventra scraper completed successfully!\n\n` +
                `Added: ${stats.addedCount} new transaction${stats.addedCount !== 1 ? 's' : ''}\n` +
                `Filtered: ${stats.filteredCount} Sale transaction${stats.filteredCount !== 1 ? 's' : ''}\n` +
                `Total: ${stats.totalTransactions} transactions in database\n` +
                `Time: ${new Date().toISOString()}` +
-               transactionDetails;
+               transactionDetails +
+               wrappedNote;
     }
 
-    try {
-        await transporter.sendMail({
-            from: emailConfig.user,
-            to: emailConfig.to || emailConfig.user,
-            subject: subject,
-            text: text
-        });
-        console.log('Email notification sent');
-    } catch (emailError) {
-        console.error('Failed to send email:', emailError.message);
-    }
+    await sendMail({ subject, text, attachments });
 };
 
 const main = async () => {
@@ -387,6 +404,8 @@ const main = async () => {
             ...stats,
             totalTransactions: mergedData.totalTransactions
         });
+
+        await maybeSendMonthlyWrapped();
 
     } catch (error) {
         console.error(`[${new Date().toISOString()}] - Error:`, error);

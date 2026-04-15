@@ -716,7 +716,7 @@ const generateWrapped = async (year, month = null, week = null) => {
             if (week !== null) label += `-w${week.toString().padStart(2, '0')}`;
             else if (month) label += `-${month.toString().padStart(2, '0')}`;
             console.log(`No transactions found for ${label}`);
-            return;
+            return null;
         }
 
         const data = { ...rawData, transactions: filteredTransactions };
@@ -749,39 +749,79 @@ const generateWrapped = async (year, month = null, week = null) => {
             { name: '6-personality', fn: () => generatePersonalityImage(stats, insights) }
         ];
         
+        const filePaths = [];
         for (const img of images) {
             const buffer = await img.fn();
             const filename = `${CONFIG.outputDir}/${filePrefix}-${img.name}.png`;
             await fs.writeFile(filename, buffer);
+            filePaths.push(filename);
             console.log(`Generated ${filename}`);
         }
-        
+
         console.log(`\nAll 6 images saved to ${CONFIG.outputDir}/`);
-        
+
+        return { filePaths, period, filePrefix };
+
     } catch (error) {
         console.error('Error generating wrapped:', error);
+        return null;
     }
 };
 
-const args = process.argv.slice(2);
-
-if (args.length === 0) {
-    console.log('Usage:');
-    console.log('  node generate_wrapped.js 2026          # Full year');
-    console.log('  node generate_wrapped.js 2026 1        # Specific month (January)');
-    console.log('  node generate_wrapped.js 2026 12       # December');
-    console.log('  node generate_wrapped.js 2026 w14      # Week 14');
-} else {
-    const year = parseInt(args[0]);
-    const arg2 = args[1] || null;
-
-    if (arg2 && /^w\d+$/i.test(arg2)) {
-        const week = parseInt(arg2.slice(1));
-        generateWrapped(year, null, week);
-    } else {
-        const month = arg2 ? parseInt(arg2) : null;
-        generateWrapped(year, month);
+const emailWrapped = async (result) => {
+    if (!result) {
+        console.log('Nothing to email');
+        return;
     }
+    const { sendMail } = require('./mailer.js');
+    const path = require('path');
+    await sendMail({
+        subject: `🚇 CTA Wrapped: ${result.period}`,
+        text: `Your CTA Wrapped for ${result.period} is attached.`,
+        attachments: result.filePaths.map(p => ({ filename: path.basename(p), path: p }))
+    });
+};
+
+const args = process.argv.slice(2);
+const shouldEmail = args.includes('--email');
+const positional = args.filter(a => !a.startsWith('--'));
+
+const run = async () => {
+    if (positional.length === 0) {
+        console.log('Usage:');
+        console.log('  node generate_wrapped.js 2026                # Full year');
+        console.log('  node generate_wrapped.js 2026 1              # Specific month (January)');
+        console.log('  node generate_wrapped.js 2026 12             # December');
+        console.log('  node generate_wrapped.js 2026 w14            # Week 14');
+        console.log('  node generate_wrapped.js last-month --email  # Previous month, emailed');
+        console.log('  node generate_wrapped.js last-week --email   # Previous week, emailed');
+        return;
+    }
+
+    let result;
+    if (positional[0] === 'last-month') {
+        const now = new Date();
+        const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        result = await generateWrapped(prev.getFullYear(), prev.getMonth() + 1);
+    } else if (positional[0] === 'last-week') {
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        result = await generateWrapped(yesterday.getFullYear(), null, getWeekNumber(yesterday));
+    } else {
+        const year = parseInt(positional[0]);
+        const arg2 = positional[1] || null;
+        if (arg2 && /^w\d+$/i.test(arg2)) {
+            result = await generateWrapped(year, null, parseInt(arg2.slice(1)));
+        } else {
+            const month = arg2 ? parseInt(arg2) : null;
+            result = await generateWrapped(year, month);
+        }
+    }
+
+    if (shouldEmail) await emailWrapped(result);
+};
+
+if (require.main === module) {
+    run();
 }
 
-module.exports = { generateWrapped, analyzeVentraData, generateInsights };
+module.exports = { generateWrapped, emailWrapped, getWeekNumber, analyzeVentraData, generateInsights };
