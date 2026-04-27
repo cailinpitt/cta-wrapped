@@ -1,0 +1,13 @@
+# cta-wrapped crontab — source of truth.
+# Append between # CTA-WRAPPED-START / # CTA-WRAPPED-END markers in the
+# live crontab. Don't `crontab cron/crontab.txt` directly — that wipes
+# any other unrelated jobs.
+
+W=/home/cailin/Development/cta-wrapped
+
+# CTA-WRAPPED-START
+
+# Fetch latest Ventra transactions weekly (Sunday noon).
+0 12 * * 0 cd $W && node fetch.js >> cron.log 2>&1
+
+# CTA-WRAPPED-END
