@@ -3,6 +3,8 @@ const path = require('path');
 const { ventraKeys } = require('./keys.js');
 const { sendMail } = require('./mailer.js');
 const { generateWrapped, emailWrapped, getWeekNumber } = require('./generate_wrapped.js');
+const { updateRiddenFromTransactions } = require('./bus_routes.js');
+const { generateBusBingo } = require('./generate_bus_bingo.js');
 
 const CONFIG = {
     maxRetries: 3,
@@ -327,10 +329,14 @@ const buildWeeklyAttachments = async () => {
     try {
         const result = await generateWrapped(year, null, week);
         if (!result) return { attachments: [], period: null };
-        return {
-            attachments: result.filePaths.map(p => ({ filename: path.basename(p), path: p })),
-            period: result.period
-        };
+        const attachments = result.filePaths.map(p => ({ filename: path.basename(p), path: p }));
+        try {
+            const bingo = await generateBusBingo();
+            attachments.push({ filename: path.basename(bingo.filePath), path: bingo.filePath });
+        } catch (err) {
+            console.error('Failed to generate bus bingo:', err.message);
+        }
+        return { attachments, period: result.period };
     } catch (err) {
         console.error('Failed to generate weekly wrapped:', err.message);
         return { attachments: [], period: null };
@@ -398,6 +404,16 @@ const main = async () => {
         );
 
         console.log(`Data saved to ${dataFile}`);
+
+        try {
+            const bingoUpdate = await updateRiddenFromTransactions(mergedData.transactions);
+            if (bingoUpdate.added.length > 0) {
+                console.log(`New bus routes detected: ${bingoUpdate.added.map(r => r.route).join(', ')}`);
+            }
+            console.log(`Bus bingo: ${bingoUpdate.totalRidden}/${bingoUpdate.totalRoutes} routes ridden`);
+        } catch (err) {
+            console.error('Failed to update bus_routes.json:', err.message);
+        }
         console.log(`[${new Date().toISOString()}] Complete`);
 
         await sendEmail({
