@@ -146,7 +146,14 @@ const names = {
     206: 'Evanston Circulator',
 };
 
-const allRoutes = Object.keys(names);
+// Night Owl routes (N-prefixed) are excluded from `allRoutes` EXCEPT N5:
+// Ventra reports overnight rides under the daytime route_id (a 3 AM 87-bus
+// shows up as "87 87th", not "N87"), so a rider can never actually check
+// off N87/N22/N66/etc. on the bingo card. N5 stays — no daytime "5" route
+// exists, so CTA tracks it as its own route end-to-end. Names map keeps
+// the full set so any unexpected Ventra "N87 87th Night Bus" string still
+// resolves rather than getting silently dropped by extractRouteId.
+const allRoutes = Object.keys(names).filter((r) => !/^N\d/.test(r) || r === 'N5');
 
 /** Pull the route ID off a Ventra bus locationRoute like "67 67th-69th-71st" → "67". */
 const extractRouteId = (locationRoute) => {
