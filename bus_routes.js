@@ -154,7 +154,25 @@ const names = {
 // exists, so CTA tracks it as its own route end-to-end. Names map keeps
 // the full set so any unexpected Ventra "N87 87th Night Bus" string still
 // resolves rather than getting silently dropped by extractRouteId.
-const allRoutes = Object.keys(names).filter((r) => !/^N\d/.test(r) || r === 'N5');
+// Group routes by their numeric part so variants sit next to the base route on
+// the bingo grid (e.g. 49 · 49B · X49, J14 · 15). Object.keys would otherwise
+// return all integer-like keys first in numeric order, then string keys in
+// insertion order, scattering letter-prefixed routes to the end.
+const parseRoute = (r) => {
+    const m = String(r).match(/^([A-Z]*)(\d+)([A-Z]*)$/);
+    return m ? { num: parseInt(m[2], 10), prefix: m[1], suffix: m[3] } : { num: 0, prefix: '', suffix: String(r) };
+};
+const allRoutes = Object.keys(names)
+    .filter((r) => !/^N\d/.test(r) || r === 'N5')
+    .sort((a, b) => {
+        const pa = parseRoute(a), pb = parseRoute(b);
+        if (pa.num !== pb.num) return pa.num - pb.num;
+        // Base route (no prefix/suffix) first, then suffix variants, then prefix variants.
+        const rank = (p) => (!p.prefix && !p.suffix ? 0 : p.suffix && !p.prefix ? 1 : 2);
+        const ra = rank(pa), rb = rank(pb);
+        if (ra !== rb) return ra - rb;
+        return (pa.suffix || pa.prefix).localeCompare(pb.suffix || pb.prefix);
+    });
 
 /** Pull the route ID off a Ventra bus locationRoute like "67 67th-69th-71st" → "67". */
 const extractRouteId = (locationRoute) => {
