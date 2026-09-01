@@ -292,7 +292,7 @@ const applyGrain = (ctx, count = 5500) => {
     }
 };
 
-/** Organic blob shape */
+/** Organic blob shape — kept as an off-canvas corner accent so it never lands under body copy */
 const drawBlob = (ctx, cx, cy, baseR, color, seed = 1) => {
     const rng = seededRng(seed);
     const points = 9;
@@ -302,6 +302,8 @@ const drawBlob = (ctx, cx, cy, baseR, color, seed = 1) => {
         angles.push((i / points) * Math.PI * 2);
         radii.push(baseR * (0.78 + rng() * 0.42));
     }
+    ctx.save();
+    ctx.globalAlpha = 0.9;
     ctx.fillStyle = color;
     ctx.beginPath();
     for (let i = 0; i <= points; i++) {
@@ -324,6 +326,7 @@ const drawBlob = (ctx, cx, cy, baseR, color, seed = 1) => {
     }
     ctx.closePath();
     ctx.fill();
+    ctx.restore();
 };
 
 /** Star/burst shape (sticker) */
@@ -441,8 +444,8 @@ const generateOverviewImage = async (stats, period) => {
     fillBg(ctx, palette.bg);
 
     // Backdrop blobs (off-canvas anchored)
-    drawBlob(ctx, W * 1.05, H * 0.18, 520, palette.secondary, hashSeed(period + 'b1'));
-    drawBlob(ctx, -W * 0.1, H * 0.78, 460, palette.accent, hashSeed(period + 'b2'));
+    drawBlob(ctx, W * 1.26, H * 0.12, 340, palette.secondary, hashSeed(period + 'b1'));
+    drawBlob(ctx, -W * 0.26, H * 0.82, 340, palette.accent, hashSeed(period + 'b2'));
 
     // Header tag
     drawTag(ctx, 'CTA WRAPPED', W / 2, 150, 44, '900', palette.primary, palette.bg, -0.04, 36);
@@ -530,8 +533,8 @@ const generateRailImage = async (stats, insights, period) => {
     const W = CONFIG.width, H = CONFIG.height;
 
     fillBg(ctx, palette.bg);
-    drawBlob(ctx, -W * 0.15, H * 0.22, 460, palette.secondary, hashSeed(period + 'rail-b1'));
-    drawBlob(ctx, W * 1.1, H * 0.7, 400, palette.accent, hashSeed(period + 'rail-b2'));
+    drawBlob(ctx, -W * 0.26, H * 0.13, 330, palette.secondary, hashSeed(period + 'rail-b1'));
+    drawBlob(ctx, W * 1.27, H * 0.14, 330, palette.accent, hashSeed(period + 'rail-b2'));
 
     drawTag(ctx, 'RAIL JOURNEY', W / 2, 130, 38, '900', palette.primary, palette.bg, -0.03, 32);
 
@@ -570,7 +573,8 @@ const generateRailImage = async (stats, insights, period) => {
     // Typographic stack: station names sized by rides
     const top = stats.rail.stationVisits.slice(0, 5);
     const maxCount = top[0]?.count || 1;
-    const colors = [palette.primary, palette.accent, palette.primary, palette.accent, palette.primary];
+    // Alternate primary/secondary only — accent is white or near-white in several palettes
+    const colors = [palette.primary, palette.secondary, palette.primary, palette.secondary, palette.primary];
     let yPos = 1080;
     top.forEach((s, i) => {
         const ratio = s.count / maxCount;
@@ -619,8 +623,8 @@ const generateBusImage = async (stats, insights, period) => {
     const W = CONFIG.width, H = CONFIG.height;
 
     fillBg(ctx, palette.bg);
-    drawBlob(ctx, -W * 0.15, H * 0.18, 380, palette.primary, hashSeed(period + 'bus-b1'));
-    drawBlob(ctx, W * 1.15, H * 0.32, 440, palette.secondary, hashSeed(period + 'bus-b2'));
+    drawBlob(ctx, -W * 0.26, H * 0.13, 330, palette.primary, hashSeed(period + 'bus-b1'));
+    drawBlob(ctx, W * 1.27, H * 0.36, 330, palette.secondary, hashSeed(period + 'bus-b2'));
 
     drawTag(ctx, 'BUS ROUTES', W / 2, 130, 38, '900', palette.accent, palette.bg, -0.03, 32);
 
@@ -707,8 +711,8 @@ const generateTimeOfDayImage = async (stats, period) => {
     const W = CONFIG.width, H = CONFIG.height;
 
     fillBg(ctx, palette.bg);
-    drawBlob(ctx, W * 1.05, -120, 380, palette.accent, hashSeed(period + 'time-b1'));
-    drawBlob(ctx, -120, H * 0.55, 360, palette.secondary, hashSeed(period + 'time-b2'));
+    drawBlob(ctx, W * 1.27, -170, 330, palette.accent, hashSeed(period + 'time-b1'));
+    drawBlob(ctx, -W * 0.27, H * 0.5, 320, palette.secondary, hashSeed(period + 'time-b2'));
 
     drawTag(ctx, 'WHEN YOU RIDE', W / 2, 130, 38, '900', palette.primary, palette.bg, -0.03, 32);
 
@@ -767,8 +771,8 @@ const generateDayOfWeekImage = async (stats, period) => {
     const W = CONFIG.width, H = CONFIG.height;
 
     fillBg(ctx, palette.bg);
-    drawBlob(ctx, -W * 0.1, H * 0.15, 420, palette.secondary, hashSeed(period + 'dow-b1'));
-    drawBlob(ctx, W * 1.05, H * 0.85, 380, palette.accent, hashSeed(period + 'dow-b2'));
+    drawBlob(ctx, -W * 0.26, H * 0.13, 330, palette.secondary, hashSeed(period + 'dow-b1'));
+    drawBlob(ctx, W * 1.27, H * 0.13, 330, palette.accent, hashSeed(period + 'dow-b2'));
 
     drawTag(ctx, 'YOUR WEEK', W / 2, 130, 38, '900', palette.primary, palette.bg, -0.03, 32);
 
@@ -850,8 +854,8 @@ const generatePersonalityImage = async (_stats, insights, period) => {
     const W = CONFIG.width, H = CONFIG.height;
 
     fillBg(ctx, palette.bg);
-    drawBlob(ctx, W * 1.0, H * 0.18, 480, palette.secondary, hashSeed(period + 'p-b1'));
-    drawBlob(ctx, -W * 0.12, H * 0.85, 440, palette.accent, hashSeed(period + 'p-b2'));
+    drawBlob(ctx, W * 1.27, H * 0.12, 340, palette.secondary, hashSeed(period + 'p-b1'));
+    drawBlob(ctx, -W * 0.26, H * 0.87, 340, palette.accent, hashSeed(period + 'p-b2'));
 
     drawTag(ctx, 'YOUR TRANSIT', W / 2, 130, 38, '900', palette.primary, palette.bg, -0.03, 32);
 
